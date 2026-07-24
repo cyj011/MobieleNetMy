@@ -1,0 +1,6 @@
+{
+    "test_images": 1720,
+    "test_acc1": 84.13,
+    "test_acc5": 98.37,
+    "test_loss": 0.6371
+}
