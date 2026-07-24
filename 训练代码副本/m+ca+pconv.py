@@ -254,6 +254,12 @@ def load_local_pretrained_backbone(backbone, pretrained_path):
     return backbone.load_state_dict(state_dict, strict=False)
 
 
+def disable_unused_backbone_head(backbone):
+    for name in ("global_pool", "conv_head", "norm_head", "act2", "flatten", "classifier"):
+        if hasattr(backbone, name):
+            setattr(backbone, name, nn.Identity())
+
+
 class MobileNetV4_CA_PConv(nn.Module):
 
     def __init__(
@@ -277,6 +283,7 @@ class MobileNetV4_CA_PConv(nn.Module):
         )
 
         self.local_pretrained_msg = load_local_pretrained_backbone(self.backbone, pretrained_path)
+        disable_unused_backbone_head(self.backbone)
 
         self.pconv_stats = {
             "replaced_depthwise": 0,
