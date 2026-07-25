@@ -193,7 +193,7 @@ class PartialDepthwiseConv2d(nn.Module):
         return torch.cat((x_conv, x_untouched), dim=1)
 
 
-class DOConv2d(nn.Module):
+class RepConv2d(nn.Module):
     def __init__(
             self,
             in_channels,
@@ -203,46 +203,58 @@ class DOConv2d(nn.Module):
             padding=0,
             dilation=1,
             groups=1,
-            bias=True,
-            padding_mode="zeros"):
+            bias=False,
+            padding_mode="zeros",
+            use_identity=True):
         super().__init__()
-        if in_channels % groups != 0:
-            raise ValueError("in_channels must be divisible by groups")
-        if out_channels % groups != 0:
-            raise ValueError("out_channels must be divisible by groups")
-
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.kernel_size = kernel_size if isinstance(kernel_size, tuple) else (kernel_size, kernel_size)
-        self.stride = stride
+        self.stride = stride if isinstance(stride, tuple) else (stride, stride)
         self.padding = padding
-        self.dilation = dilation
+        self.dilation = dilation if isinstance(dilation, tuple) else (dilation, dilation)
         self.groups = groups
         self.padding_mode = padding_mode
         self.in_channels_per_group = in_channels // groups
-        self.out_channels_per_group = out_channels // groups
 
-        kh, kw = self.kernel_size
-        kernel_area = kh * kw
-        self.weight = nn.Parameter(torch.empty(out_channels, self.in_channels_per_group, kh, kw))
-        self.d = nn.Parameter(torch.zeros(groups, self.in_channels_per_group, kernel_area, kernel_area))
-        self.register_buffer("d_identity", torch.eye(kernel_area).view(1, 1, kernel_area, kernel_area))
-        if bias:
-            self.bias = nn.Parameter(torch.empty(out_channels))
+        self.conv_kxk = nn.Conv2d(
+            in_channels,
+            out_channels,
+            self.kernel_size,
+            stride=self.stride,
+            padding=padding,
+            dilation=self.dilation,
+            groups=groups,
+            bias=bias,
+            padding_mode=padding_mode,
+        )
+        self.conv_1x1 = None
+        if self.kernel_size != (1, 1) and self.dilation == (1, 1):
+            self.conv_1x1 = nn.Conv2d(
+                in_channels,
+                out_channels,
+                kernel_size=1,
+                stride=self.stride,
+                padding=0,
+                groups=groups,
+                bias=False,
+            )
+
+        self.has_identity = (
+            use_identity
+            and in_channels == out_channels
+            and self.stride == (1, 1)
+            and self.kernel_size[0] % 2 == 1
+            and self.kernel_size[1] % 2 == 1
+        )
+        if self.has_identity:
+            self.identity_scale = nn.Parameter(torch.zeros(out_channels))
         else:
-            self.register_parameter("bias", None)
-        self.reset_parameters()
-
-    def reset_parameters(self):
-        nn.init.kaiming_uniform_(self.weight, a=np.sqrt(5))
-        if self.bias is not None:
-            fan_in, _ = nn.init._calculate_fan_in_and_fan_out(self.weight)
-            bound = 1 / np.sqrt(fan_in) if fan_in > 0 else 0
-            nn.init.uniform_(self.bias, -bound, bound)
+            self.register_parameter("identity_scale", None)
 
     @classmethod
-    def from_conv(cls, conv):
-        do_conv = cls(
+    def from_conv(cls, conv, use_identity=True):
+        repconv = cls(
             in_channels=conv.in_channels,
             out_channels=conv.out_channels,
             kernel_size=conv.kernel_size,
@@ -252,38 +264,53 @@ class DOConv2d(nn.Module):
             groups=conv.groups,
             bias=conv.bias is not None,
             padding_mode=conv.padding_mode,
+            use_identity=use_identity,
         )
         with torch.no_grad():
-            do_conv.weight.copy_(conv.weight)
+            repconv.conv_kxk.weight.copy_(conv.weight)
             if conv.bias is not None:
-                do_conv.bias.copy_(conv.bias)
-        return do_conv
-
-    def get_equivalent_weight(self):
-        kh, kw = self.kernel_size
-        weight = self.weight.view(
-            self.groups,
-            self.out_channels_per_group,
-            self.in_channels_per_group,
-            kh * kw,
-        )
-        d_matrix = self.d + self.d_identity.to(dtype=self.d.dtype, device=self.d.device)
-        weight = torch.einsum("goik,gikj->goij", weight, d_matrix)
-        return weight.reshape(self.out_channels, self.in_channels_per_group, kh, kw)
+                repconv.conv_kxk.bias.copy_(conv.bias)
+            if repconv.conv_1x1 is not None:
+                repconv.conv_1x1.weight.zero_()
+        return repconv
 
     def forward(self, x):
-        weight = self.get_equivalent_weight()
-        if self.padding_mode != "zeros":
-            x = F.pad(x, self._reversed_padding_repeated_twice, mode=self.padding_mode)
-            return F.conv2d(x, weight, self.bias, self.stride, 0, self.dilation, self.groups)
-        return F.conv2d(x, weight, self.bias, self.stride, self.padding, self.dilation, self.groups)
+        out = self.conv_kxk(x)
+        if self.conv_1x1 is not None:
+            out = out + self.conv_1x1(x)
+        if self.has_identity:
+            out = out + x * self.identity_scale.view(1, -1, 1, 1)
+        return out
 
-    @property
-    def _reversed_padding_repeated_twice(self):
-        if isinstance(self.padding, str):
-            raise ValueError("String padding is not supported for DOConv2d padding_mode fusion")
-        padding = self.padding if isinstance(self.padding, tuple) else (self.padding, self.padding)
-        return (padding[1], padding[1], padding[0], padding[0])
+    def get_equivalent_kernel_bias(self):
+        kernel = self.conv_kxk.weight
+        bias = self.conv_kxk.bias
+        if bias is None:
+            bias = torch.zeros(self.out_channels, device=kernel.device, dtype=kernel.dtype)
+
+        if self.conv_1x1 is not None:
+            kernel = kernel + self._pad_1x1_to_kxk(self.conv_1x1.weight)
+
+        if self.has_identity:
+            kernel = kernel + self._identity_kernel(kernel)
+
+        return kernel, bias
+
+    def _pad_1x1_to_kxk(self, kernel_1x1):
+        kh, kw = self.kernel_size
+        pad_h = kh // 2
+        pad_w = kw // 2
+        return F.pad(kernel_1x1, [pad_w, pad_w, pad_h, pad_h])
+
+    def _identity_kernel(self, ref_kernel):
+        kh, kw = self.kernel_size
+        identity = torch.zeros_like(ref_kernel)
+        center_h = kh // 2
+        center_w = kw // 2
+        for out_idx in range(self.out_channels):
+            in_idx = out_idx % self.in_channels_per_group
+            identity[out_idx, in_idx, center_h, center_w] = self.identity_scale[out_idx]
+        return identity
 
     def to_conv2d(self):
         conv = nn.Conv2d(
@@ -294,13 +321,13 @@ class DOConv2d(nn.Module):
             padding=self.padding,
             dilation=self.dilation,
             groups=self.groups,
-            bias=self.bias is not None,
+            bias=True,
             padding_mode=self.padding_mode,
         )
+        kernel, bias = self.get_equivalent_kernel_bias()
         with torch.no_grad():
-            conv.weight.copy_(self.get_equivalent_weight())
-            if self.bias is not None:
-                conv.bias.copy_(self.bias)
+            conv.weight.copy_(kernel)
+            conv.bias.copy_(bias)
         return conv
 
 
@@ -325,11 +352,13 @@ def _replace_high_channel_depthwise_with_pconv(module, min_channels=512, n_div=4
     return replaced
 
 
-def _replace_spatial_conv_with_doconv(
+def _replace_spatial_conv_with_repconv(
         module,
         min_channels=64,
         max_kernel_size=7,
-        include_depthwise=False,
+        include_depthwise=True,
+        include_stride2=True,
+        use_identity=True,
         skip_pconv=True):
     replaced = 0
     for child_name, child in module.named_children():
@@ -344,29 +373,33 @@ def _replace_spatial_conv_with_doconv(
             )
             is_large_enough = max(child.in_channels, child.out_channels) >= min_channels
             is_kernel_supported = max(kernel_size) <= max_kernel_size
+            is_stride_supported = include_stride2 or child.stride == (1, 1)
             if (not is_pointwise
                     and is_large_enough
                     and is_kernel_supported
+                    and is_stride_supported
                     and (include_depthwise or not is_depthwise)):
-                setattr(module, child_name, DOConv2d.from_conv(child))
+                setattr(module, child_name, RepConv2d.from_conv(child, use_identity=use_identity))
                 replaced += 1
                 continue
-        replaced += _replace_spatial_conv_with_doconv(
+        replaced += _replace_spatial_conv_with_repconv(
             child,
             min_channels=min_channels,
             max_kernel_size=max_kernel_size,
             include_depthwise=include_depthwise,
+            include_stride2=include_stride2,
+            use_identity=use_identity,
             skip_pconv=skip_pconv,
         )
     return replaced
 
 
-def convert_doconv_to_conv2d(module):
+def convert_repconv_to_conv2d(module):
     for child_name, child in module.named_children():
-        if isinstance(child, DOConv2d):
+        if isinstance(child, RepConv2d):
             setattr(module, child_name, child.to_conv2d())
         else:
-            convert_doconv_to_conv2d(child)
+            convert_repconv_to_conv2d(child)
     return module
 
 
@@ -427,10 +460,12 @@ class MobileNetV4_CA_PConv(nn.Module):
             pconv=True,
             pconv_n_div=4,
             pconv_min_channels=512,
-            do_conv=True,
-            do_conv_min_channels=64,
-            do_conv_max_kernel_size=7,
-            do_conv_include_depthwise=True):
+            repconv=True,
+            repconv_min_channels=64,
+            repconv_max_kernel_size=7,
+            repconv_include_depthwise=True,
+            repconv_include_stride2=True,
+            repconv_use_identity=True):
 
         super().__init__()
         use_online_pretrained = pretrained and not pretrained_path
@@ -458,18 +493,22 @@ class MobileNetV4_CA_PConv(nn.Module):
                 n_div=pconv_n_div,
             )
 
-        self.do_conv_stats = {
+        self.repconv_stats = {
             "replaced_spatial_conv": 0,
-            "min_channels": do_conv_min_channels,
-            "max_kernel_size": do_conv_max_kernel_size,
-            "include_depthwise": do_conv_include_depthwise,
+            "min_channels": repconv_min_channels,
+            "max_kernel_size": repconv_max_kernel_size,
+            "include_depthwise": repconv_include_depthwise,
+            "include_stride2": repconv_include_stride2,
+            "use_identity": repconv_use_identity,
         }
-        if do_conv:
-            self.do_conv_stats["replaced_spatial_conv"] = _replace_spatial_conv_with_doconv(
+        if repconv:
+            self.repconv_stats["replaced_spatial_conv"] = _replace_spatial_conv_with_repconv(
                 self.backbone,
-                min_channels=do_conv_min_channels,
-                max_kernel_size=do_conv_max_kernel_size,
-                include_depthwise=do_conv_include_depthwise,
+                min_channels=repconv_min_channels,
+                max_kernel_size=repconv_max_kernel_size,
+                include_depthwise=repconv_include_depthwise,
+                include_stride2=repconv_include_stride2,
+                use_identity=repconv_use_identity,
                 skip_pconv=True,
             )
 
@@ -496,8 +535,8 @@ class MobileNetV4_CA_PConv(nn.Module):
 
         return x
 
-    def switch_doconv_to_deploy(self):
-        convert_doconv_to_conv2d(self)
+    def switch_repconv_to_deploy(self):
+        convert_repconv_to_conv2d(self)
         return self
 
 def get_args_parser():
@@ -528,14 +567,18 @@ def get_args_parser():
                         help='Only 1 / pconv_n_div channels use spatial convolution')
     parser.add_argument('--pconv_min_channels', default=512, type=int,
                         help='Only replace depthwise convolutions whose channel count is at least this value')
-    parser.add_argument('--do_conv', default=True, type=str2bool,
-                        help='Replace selected spatial convolutions with DO-Conv during training')
-    parser.add_argument('--do_conv_min_channels', default=64, type=int,
+    parser.add_argument('--repconv', default=True, type=str2bool,
+                        help='Replace selected spatial convolutions with RepConv')
+    parser.add_argument('--repconv_min_channels', default=64, type=int,
                         help='Only replace spatial convolutions whose in/out channels are at least this threshold')
-    parser.add_argument('--do_conv_max_kernel_size', default=7, type=int,
+    parser.add_argument('--repconv_max_kernel_size', default=7, type=int,
                         help='Only replace spatial convolutions whose kernel size is no larger than this value')
-    parser.add_argument('--do_conv_include_depthwise', default=True, type=str2bool,
-                        help='Also replace depthwise spatial convolutions with DO-Conv')
+    parser.add_argument('--repconv_include_depthwise', default=True, type=str2bool,
+                        help='Also replace depthwise spatial convolutions with RepConv')
+    parser.add_argument('--repconv_include_stride2', default=True, type=str2bool,
+                        help='Also replace stride-2 spatial convolutions with RepConv')
+    parser.add_argument('--repconv_use_identity', default=True, type=str2bool,
+                        help='Use learnable identity branch when shape allows it')
     parser.add_argument('--input-size', default=224, type=int, help='images input size')
     parser.add_argument('--model-ema', action='store_true')
     parser.add_argument('--no-model-ema', action='store_false', dest='model_ema')
@@ -799,13 +842,15 @@ def main(args):
         pconv=args.pconv,
         pconv_n_div=args.pconv_n_div,
         pconv_min_channels=args.pconv_min_channels,
-        do_conv=args.do_conv,
-        do_conv_min_channels=args.do_conv_min_channels,
-        do_conv_max_kernel_size=args.do_conv_max_kernel_size,
-        do_conv_include_depthwise=args.do_conv_include_depthwise,
+        repconv=args.repconv,
+        repconv_min_channels=args.repconv_min_channels,
+        repconv_max_kernel_size=args.repconv_max_kernel_size,
+        repconv_include_depthwise=args.repconv_include_depthwise,
+        repconv_include_stride2=args.repconv_include_stride2,
+        repconv_use_identity=args.repconv_use_identity,
     )
     print(f"PConv changes: {model.pconv_stats}")
-    print(f"DO-Conv changes: {model.do_conv_stats}")
+    print(f"RepConv changes: {model.repconv_stats}")
     if model.local_pretrained_msg is not None:
         print(f"Loaded local pretrained weights: {model.local_pretrained_msg}")
 
@@ -844,9 +889,9 @@ def main(args):
                     if isinstance(module, PartialDepthwiseConv2d):
                         for para in module.parameters():
                             para.requires_grad_(True)
-            if args.do_conv:
+            if args.repconv:
                 for module in model.modules():
-                    if isinstance(module, DOConv2d):
+                    if isinstance(module, RepConv2d):
                         for para in module.parameters():
                             para.requires_grad_(True)
 
@@ -1077,10 +1122,12 @@ def main(args):
             pconv=args.pconv,
             pconv_n_div=args.pconv_n_div,
             pconv_min_channels=args.pconv_min_channels,
-            do_conv=args.do_conv,
-            do_conv_min_channels=args.do_conv_min_channels,
-            do_conv_max_kernel_size=args.do_conv_max_kernel_size,
-            do_conv_include_depthwise=args.do_conv_include_depthwise,
+            repconv=args.repconv,
+            repconv_min_channels=args.repconv_min_channels,
+            repconv_max_kernel_size=args.repconv_max_kernel_size,
+            repconv_include_depthwise=args.repconv_include_depthwise,
+            repconv_include_stride2=args.repconv_include_stride2,
+            repconv_use_identity=args.repconv_use_identity,
         )
         model_predict.to(device)
         print('*******************STARTING PREDICT*******************')
