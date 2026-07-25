@@ -430,7 +430,7 @@ class MobileNetV4_CA_PConv(nn.Module):
             do_conv=True,
             do_conv_min_channels=64,
             do_conv_max_kernel_size=7,
-            do_conv_include_depthwise=False):
+            do_conv_include_depthwise=True):
 
         super().__init__()
         use_online_pretrained = pretrained and not pretrained_path
@@ -534,7 +534,7 @@ def get_args_parser():
                         help='Only replace spatial convolutions whose in/out channels are at least this threshold')
     parser.add_argument('--do_conv_max_kernel_size', default=7, type=int,
                         help='Only replace spatial convolutions whose kernel size is no larger than this value')
-    parser.add_argument('--do_conv_include_depthwise', default=False, type=str2bool,
+    parser.add_argument('--do_conv_include_depthwise', default=True, type=str2bool,
                         help='Also replace depthwise spatial convolutions with DO-Conv')
     parser.add_argument('--input-size', default=224, type=int, help='images input size')
     parser.add_argument('--model-ema', action='store_true')
@@ -799,8 +799,13 @@ def main(args):
         pconv=args.pconv,
         pconv_n_div=args.pconv_n_div,
         pconv_min_channels=args.pconv_min_channels,
+        do_conv=args.do_conv,
+        do_conv_min_channels=args.do_conv_min_channels,
+        do_conv_max_kernel_size=args.do_conv_max_kernel_size,
+        do_conv_include_depthwise=args.do_conv_include_depthwise,
     )
     print(f"PConv changes: {model.pconv_stats}")
+    print(f"DO-Conv changes: {model.do_conv_stats}")
     if model.local_pretrained_msg is not None:
         print(f"Loaded local pretrained weights: {model.local_pretrained_msg}")
 
@@ -837,6 +842,11 @@ def main(args):
             if args.pconv:
                 for module in model.modules():
                     if isinstance(module, PartialDepthwiseConv2d):
+                        for para in module.parameters():
+                            para.requires_grad_(True)
+            if args.do_conv:
+                for module in model.modules():
+                    if isinstance(module, DOConv2d):
                         for para in module.parameters():
                             para.requires_grad_(True)
 
@@ -1067,6 +1077,10 @@ def main(args):
             pconv=args.pconv,
             pconv_n_div=args.pconv_n_div,
             pconv_min_channels=args.pconv_min_channels,
+            do_conv=args.do_conv,
+            do_conv_min_channels=args.do_conv_min_channels,
+            do_conv_max_kernel_size=args.do_conv_max_kernel_size,
+            do_conv_include_depthwise=args.do_conv_include_depthwise,
         )
         model_predict.to(device)
         print('*******************STARTING PREDICT*******************')
