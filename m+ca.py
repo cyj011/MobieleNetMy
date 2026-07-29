@@ -53,16 +53,6 @@ from datasets.threeaugment import new_data_aug_generator
 from estimate_model import Predictor, Plot_ROC, OptAUC
 
 
-def str2bool(v):
-    if isinstance(v, bool):
-        return v
-    if v.lower() in ("yes", "true", "t", "1", "y"):
-        return True
-    if v.lower() in ("no", "false", "f", "0", "n"):
-        return False
-    raise argparse.ArgumentTypeError("Boolean value expected.")
-
-
 class h_sigmoid(nn.Module):
     def __init__(self, inplace=True):
         super().__init__()
@@ -123,193 +113,22 @@ class CoordAtt(nn.Module):
 
         return out
 
-MOBILENETV4_PRETRAINED_ALIASES = {
-    "mobilenetv4_conv_small_050": "mobilenetv4_conv_small_050.e3000_r224_in1k",
-    "mobilenetv4_conv_small": "mobilenetv4_conv_small.e2400_r224_in1k",
-    "mobilenetv4_conv_medium": "mobilenetv4_conv_medium.e500_r256_in1k",
-    "mobilenetv4_conv_large": "mobilenetv4_conv_large.e600_r384_in1k",
-    "mobilenetv4_conv_aa_large": "mobilenetv4_conv_aa_large.e600_r384_in1k",
-    "mobilenetv4_conv_blur_medium": "mobilenetv4_conv_blur_medium.e500_r224_in1k",
-    "mobilenetv4_hybrid_medium": "mobilenetv4_hybrid_medium.e500_r224_in1k",
-    "mobilenetv4_hybrid_large": "mobilenetv4_hybrid_large.e600_r384_in1k",
-}
+class MobileNetV4_CA(nn.Module):
 
-
-class DODepthwiseConv2d(nn.Module):
-    def __init__(
-            self,
-            channels,
-            kernel_size,
-            stride=1,
-            padding=0,
-            dilation=1,
-            bias=False,
-            padding_mode="zeros"):
-        super().__init__()
-        self.channels = channels
-        self.kernel_size = kernel_size if isinstance(kernel_size, tuple) else (kernel_size, kernel_size)
-        self.stride = stride
-        self.padding = padding
-        self.dilation = dilation
-        self.padding_mode = padding_mode
-        self.k = self.kernel_size[0] * self.kernel_size[1]
-
-        self.weight = nn.Parameter(torch.empty(channels, 1, *self.kernel_size))
-        self.bias = nn.Parameter(torch.empty(channels)) if bias else None
-
-        eye = torch.eye(self.k).view(1, self.k, self.k).repeat(channels, 1, 1)
-        self.D = nn.Parameter(eye)
-
-    @classmethod
-    def from_conv(cls, conv):
-        do_conv = cls(
-            channels=conv.in_channels,
-            kernel_size=conv.kernel_size,
-            stride=conv.stride,
-            padding=conv.padding,
-            dilation=conv.dilation,
-            bias=conv.bias is not None,
-            padding_mode=conv.padding_mode,
-        )
-        with torch.no_grad():
-            do_conv.weight.copy_(conv.weight)
-            if conv.bias is not None:
-                do_conv.bias.copy_(conv.bias)
-        return do_conv
-
-    def get_equivalent_weight(self):
-        weight_flat = self.weight.view(self.channels, self.k)
-        do_weight = torch.bmm(weight_flat.unsqueeze(1), self.D).squeeze(1)
-        return do_weight.view(self.channels, 1, *self.kernel_size)
-
-    def forward(self, x):
-        weight = self.get_equivalent_weight()
-        if self.padding_mode != "zeros":
-            x = F.pad(x, self._reversed_padding_repeated_twice, mode=self.padding_mode)
-            return F.conv2d(x, weight, self.bias, self.stride, 0, self.dilation, self.channels)
-        return F.conv2d(x, weight, self.bias, self.stride, self.padding, self.dilation, self.channels)
-
-    @property
-    def _reversed_padding_repeated_twice(self):
-        if isinstance(self.padding, tuple):
-            return (self.padding[1], self.padding[1], self.padding[0], self.padding[0])
-        return (self.padding, self.padding, self.padding, self.padding)
-
-    def switch_to_deploy(self):
-        conv = nn.Conv2d(
-            self.channels,
-            self.channels,
-            kernel_size=self.kernel_size,
-            stride=self.stride,
-            padding=self.padding,
-            dilation=self.dilation,
-            groups=self.channels,
-            bias=self.bias is not None,
-            padding_mode=self.padding_mode,
-        )
-        with torch.no_grad():
-            conv.weight.copy_(self.get_equivalent_weight())
-            if self.bias is not None:
-                conv.bias.copy_(self.bias)
-        return conv
-
-
-def _replace_depthwise_with_doconv(module):
-    replaced = 0
-    for child_name, child in module.named_children():
-        if child_name in {"dw_start", "dw_mid", "dw_end"} and hasattr(child, "conv"):
-            conv = child.conv
-            is_depthwise = (
-                isinstance(conv, nn.Conv2d)
-                and conv.in_channels == conv.out_channels
-                and conv.groups == conv.in_channels
-                and conv.kernel_size != (1, 1)
-            )
-            if is_depthwise:
-                child.conv = DODepthwiseConv2d.from_conv(conv)
-                replaced += 1
-                continue
-        replaced += _replace_depthwise_with_doconv(child)
-    return replaced
-
-
-def _unwrap_state_dict(checkpoint):
-    if isinstance(checkpoint, dict):
-        for key in ("state_dict", "model", "model_state_dict"):
-            if key in checkpoint and isinstance(checkpoint[key], dict):
-                return checkpoint[key]
-    return checkpoint
-
-
-def _strip_prefix_if_present(state_dict, prefix):
-    if not state_dict:
-        return state_dict
-    keys = list(state_dict.keys())
-    if all(k.startswith(prefix) for k in keys):
-        return {k[len(prefix):]: v for k, v in state_dict.items()}
-    return state_dict
-
-
-def load_local_pretrained_backbone(backbone, pretrained_path):
-    if not pretrained_path:
-        return None
-    if not os.path.isfile(pretrained_path):
-        raise FileNotFoundError(f"Local pretrained weight not found: {pretrained_path}")
-
-    if pretrained_path.endswith(".safetensors"):
-        checkpoint = load_file(pretrained_path, device="cpu")
-    else:
-        checkpoint = torch.load(pretrained_path, map_location="cpu")
-
-    state_dict = _unwrap_state_dict(checkpoint)
-    state_dict = _strip_prefix_if_present(state_dict, "module.")
-    state_dict = _strip_prefix_if_present(state_dict, "model.")
-    state_dict = _strip_prefix_if_present(state_dict, "backbone.")
-
-    for key in list(state_dict.keys()):
-        if key.startswith("classifier.") or key.startswith("head."):
-            del state_dict[key]
-
-    return backbone.load_state_dict(state_dict, strict=False)
-
-
-class MobileNetV4_CA_DOConv(nn.Module):
-
-    def __init__(
-            self,
-            num_classes,
-            model_name="mobilenetv4_conv_large",
-            pretrained=True,
-            pretrained_path="",
-            doconv=True):
+    def __init__(self, num_classes):
 
         super().__init__()
-        use_online_pretrained = pretrained and not pretrained_path
-        backbone_name = MOBILENETV4_PRETRAINED_ALIASES.get(model_name, model_name) if use_online_pretrained else model_name
 
         self.backbone = timm.create_model(
-            backbone_name,
-            pretrained=use_online_pretrained,
+            "mobilenetv4_conv_large.e600_r384_in1k",
+            pretrained=True,
             num_classes=0
         )
 
-        self.local_pretrained_msg = load_local_pretrained_backbone(self.backbone, pretrained_path)
-
-        self.doconv_stats = {
-            "replaced_depthwise": 0,
-            "local_pretrained": pretrained_path or "",
-        }
-        if doconv:
-            self.doconv_stats["replaced_depthwise"] = _replace_depthwise_with_doconv(self.backbone)
-
-        feature_dim = getattr(self.backbone, "num_features", None)
-        if feature_dim is None:
-            raise RuntimeError("Cannot infer MobileNetV4 feature dimension from backbone.num_features")
-
-        self.ca = CoordAtt(feature_dim)
+        self.ca = CoordAtt(960)
 
         self.classifier = nn.Linear(
-            feature_dim,
+            960,
             num_classes
         )
 
@@ -341,14 +160,6 @@ def get_args_parser():
                                  'mobilenetv4_conv_small_035', 'mobilenetv4_conv_small_050', 'mobilenetv4_conv_blur_medium'],
                         help='Name of model to train')
     parser.add_argument('--extra_attention_block', default=False, type=bool, help='Add an extra attention block')
-    parser.add_argument('--pretrained', default=True, type=str2bool,
-                        help='Use ImageNet pretrained MobileNetV4 weights')
-    parser.add_argument('--no-pretrained', action='store_false', dest='pretrained',
-                        help='Disable online ImageNet pretrained weights')
-    parser.add_argument('--pretrained_path', default='', type=str,
-                        help='Local pretrained weight path, such as /path/to/model.safetensors')
-    parser.add_argument('--doconv', default=True, type=str2bool,
-                        help='Replace depthwise convolutions with DO-Conv')
     parser.add_argument('--input-size', default=224, type=int, help='images input size')
     parser.add_argument('--model-ema', action='store_true')
     parser.add_argument('--no-model-ema', action='store_false', dest='model_ema')
@@ -469,9 +280,9 @@ def get_args_parser():
                         choices=['kingdom', 'phylum', 'class', 'order',
                                  'supercategory', 'family', 'genus', 'name'],
                         type=str, help='semantic granularity')
-    parser.add_argument('--output_dir', default=r'D:\WorkPlace\pythonProgram\DeepLearning\basemodels\MobileNetV4\fe2013\mn+ca+doconv',
+    parser.add_argument('--output_dir', default=r'D:\WorkPlace\pythonProgram\DeepLearning\basemodels\MobileNetV4\fe2013\mn+ca',
                         help='path where to save, empty for no saving')
-    parser.add_argument('--writer_output', default=r'D:\WorkPlace\pythonProgram\DeepLearning\basemodels\MobileNetV4\fe2013\mn+ca+doconv',
+    parser.add_argument('--writer_output', default=r'D:\WorkPlace\pythonProgram\DeepLearning\basemodels\MobileNetV4\fe2013\mn+ca',
                         help='path where to save SummaryWriter, empty for no saving')
     parser.add_argument('--device', default='cuda',
                         help='device to use for training / testing')
@@ -604,16 +415,9 @@ def main(args):
     # ========================
     #  ✅ 修复：关闭预训练 + 正确插入 LCA 注意力
     # ========================
-    model = MobileNetV4_CA_DOConv(
-        num_classes=args.nb_classes,
-        model_name=args.model,
-        pretrained=args.pretrained,
-        pretrained_path=args.pretrained_path,
-        doconv=args.doconv,
+    model = MobileNetV4_CA(
+        num_classes=args.nb_classes
     )
-    print(f"DO-Conv changes: {model.doconv_stats}")
-    if model.local_pretrained_msg is not None:
-        print(f"Loaded local pretrained weights: {model.local_pretrained_msg}")
 
 
 
@@ -645,11 +449,6 @@ def main(args):
             if args.extra_attention_block:
                 for name, para in model.extra_attention_block.named_parameters():
                     para.requires_grad_(True)
-            if args.doconv:
-                for module in model.modules():
-                    if isinstance(module, DODepthwiseConv2d):
-                        for para in module.parameters():
-                            para.requires_grad_(True)
 
     model.to(device)
 
@@ -870,13 +669,13 @@ def main(args):
 
     # plot ROC curve and confusion matrix
     if args.predict and utils.is_main_process():
-        model_predict = MobileNetV4_CA_DOConv(
-            num_classes=args.nb_classes,
-            model_name=args.model,
-            pretrained=False,
-            pretrained_path="",
-            doconv=args.doconv,
+        model_predict = create_model(
+            args.model,
+            extra_attention_block=args.extra_attention_block,
+            args=args
         )
+
+        model_predict.reset_classifier(num_classes=args.nb_classes)
         model_predict.to(device)
         print('*******************STARTING PREDICT*******************')
         Predictor(model_predict, data_loader_val, f'{args.output_dir}/{args.model}_best_checkpoint.pth', device)
