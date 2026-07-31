@@ -149,6 +149,85 @@ MOBILENETV4_PRETRAINED_ALIASES = {
 }
 
 
+class PartialDepthwiseConv2d(nn.Module):
+    def __init__(
+            self,
+            channels,
+            kernel_size,
+            stride=1,
+            padding=0,
+            dilation=1,
+            bias=False,
+            padding_mode="zeros",
+            n_div=4):
+        super().__init__()
+        self.channels = channels
+        self.kernel_size = kernel_size if isinstance(kernel_size, tuple) else (kernel_size, kernel_size)
+        self.stride = stride
+        self.padding = padding
+        self.dilation = dilation
+        self.padding_mode = padding_mode
+        self.n_div = n_div
+        self.dim_conv = max(1, channels // n_div)
+        self.dim_untouched = channels - self.dim_conv
+
+        self.partial_conv = nn.Conv2d(
+            self.dim_conv,
+            self.dim_conv,
+            kernel_size=self.kernel_size,
+            stride=stride,
+            padding=padding,
+            dilation=dilation,
+            groups=self.dim_conv,
+            bias=bias,
+            padding_mode=padding_mode,
+        )
+
+    @classmethod
+    def from_conv(cls, conv, n_div=4):
+        pconv = cls(
+            channels=conv.in_channels,
+            kernel_size=conv.kernel_size,
+            stride=conv.stride,
+            padding=conv.padding,
+            dilation=conv.dilation,
+            bias=conv.bias is not None,
+            padding_mode=conv.padding_mode,
+            n_div=n_div,
+        )
+        with torch.no_grad():
+            pconv.partial_conv.weight.copy_(conv.weight[:pconv.dim_conv])
+            if conv.bias is not None:
+                pconv.partial_conv.bias.copy_(conv.bias[:pconv.dim_conv])
+        return pconv
+
+    def forward(self, x):
+        x_conv, x_untouched = torch.split(x, [self.dim_conv, self.dim_untouched], dim=1)
+        x_conv = self.partial_conv(x_conv)
+        return torch.cat((x_conv, x_untouched), dim=1)
+
+
+def _replace_high_channel_depthwise_with_pconv(module, min_channels=512, n_div=4):
+    replaced = 0
+    for child_name, child in module.named_children():
+        if child_name in {"dw_start", "dw_mid", "dw_end"} and hasattr(child, "conv"):
+            conv = child.conv
+            is_depthwise = (
+                isinstance(conv, nn.Conv2d)
+                and conv.in_channels == conv.out_channels
+                and conv.groups == conv.in_channels
+                and conv.kernel_size != (1, 1)
+            )
+            is_high_channel = isinstance(conv, nn.Conv2d) and conv.in_channels >= min_channels
+            is_stride_one = isinstance(conv, nn.Conv2d) and conv.stride == (1, 1)
+            if is_depthwise and is_high_channel and is_stride_one:
+                child.conv = PartialDepthwiseConv2d.from_conv(conv, n_div=n_div)
+                replaced += 1
+                continue
+        replaced += _replace_high_channel_depthwise_with_pconv(child, min_channels=min_channels, n_div=n_div)
+    return replaced
+
+
 def _unwrap_state_dict(checkpoint):
     if isinstance(checkpoint, dict):
         for key in ("state_dict", "model", "model_state_dict"):
@@ -158,16 +237,18 @@ def _unwrap_state_dict(checkpoint):
 
 
 def _strip_prefix_if_present(state_dict, prefix):
-    if all(key.startswith(prefix) for key in state_dict.keys()):
-        return {key[len(prefix):]: value for key, value in state_dict.items()}
+    if not state_dict:
+        return state_dict
+    keys = list(state_dict.keys())
+    if all(k.startswith(prefix) for k in keys):
+        return {k[len(prefix):]: v for k, v in state_dict.items()}
     return state_dict
 
 
 def load_local_pretrained_backbone(backbone, pretrained_path):
     if not pretrained_path:
         return None
-
-    if not os.path.exists(pretrained_path):
+    if not os.path.isfile(pretrained_path):
         raise FileNotFoundError(f"Local pretrained weight not found: {pretrained_path}")
 
     if pretrained_path.endswith(".safetensors"):
@@ -193,7 +274,41 @@ def disable_unused_backbone_head(backbone):
             setattr(backbone, name, nn.Identity())
 
 
-class MobileNetV4_CA_GeMHead(nn.Module):
+def _make_block_activation(activation_name, inplace=True):
+    name = activation_name.lower()
+    if name == "relu6":
+        return nn.ReLU6(inplace=inplace)
+    if name == "hardswish":
+        return nn.Hardswish(inplace=inplace)
+    if name == "silu":
+        return nn.SiLU(inplace=inplace)
+    if name == "gelu":
+        return nn.GELU()
+    raise ValueError(f"Unsupported block activation: {activation_name}")
+
+
+def _is_replaceable_activation(module):
+    if isinstance(module, (nn.ReLU, nn.ReLU6, nn.Hardswish, nn.SiLU, nn.GELU)):
+        return True
+    class_name = module.__class__.__name__.lower()
+    return class_name in {"relu", "relu6", "hardswish", "hard_swish", "silu", "swish", "gelu"}
+
+
+def _replace_block_activations(module, activation_name):
+    if activation_name.lower() in {"", "none", "original"}:
+        return 0
+
+    replaced = 0
+    for child_name, child in module.named_children():
+        if _is_replaceable_activation(child):
+            setattr(module, child_name, _make_block_activation(activation_name))
+            replaced += 1
+        else:
+            replaced += _replace_block_activations(child, activation_name)
+    return replaced
+
+
+class MobileNetV4_CA_PConv_GeMHead(nn.Module):
 
     def __init__(
             self,
@@ -201,7 +316,10 @@ class MobileNetV4_CA_GeMHead(nn.Module):
             model_name="mobilenetv4_conv_large",
             pretrained=True,
             pretrained_path="",
-            dropout=0.2):
+            pconv=True,
+            pconv_n_div=4,
+            pconv_min_channels=512,
+            block_act="original"):
 
         super().__init__()
         use_online_pretrained = pretrained and not pretrained_path
@@ -216,14 +334,34 @@ class MobileNetV4_CA_GeMHead(nn.Module):
         self.local_pretrained_msg = load_local_pretrained_backbone(self.backbone, pretrained_path)
         disable_unused_backbone_head(self.backbone)
 
+        self.pconv_stats = {
+            "replaced_depthwise": 0,
+            "n_div": pconv_n_div,
+            "min_channels": pconv_min_channels,
+            "local_pretrained": pretrained_path or "",
+        }
+        if pconv:
+            self.pconv_stats["replaced_depthwise"] = _replace_high_channel_depthwise_with_pconv(
+                self.backbone,
+                min_channels=pconv_min_channels,
+                n_div=pconv_n_div,
+            )
+
+        self.block_act_stats = {
+            "activation": block_act,
+            "replaced": _replace_block_activations(self.backbone.blocks, block_act) if hasattr(self.backbone, "blocks") else 0,
+            "scope": "backbone.blocks",
+        }
+
         feature_dim = getattr(self.backbone, "num_features", None)
         if feature_dim is None:
             raise RuntimeError("Cannot infer MobileNetV4 feature dimension from backbone.num_features")
 
         self.ca = CoordAtt(feature_dim)
+
         self.gem = GeM()
         self.head_bn = nn.BatchNorm1d(feature_dim)
-        self.head_drop = nn.Dropout(p=dropout)
+        self.head_drop = nn.Dropout(p=0.2)
         self.classifier = nn.Linear(
             feature_dim,
             num_classes
@@ -262,9 +400,18 @@ def get_args_parser():
     parser.add_argument('--pretrained', default=True, type=str2bool,
                         help='Use ImageNet pretrained MobileNetV4 weights')
     parser.add_argument('--no-pretrained', action='store_false', dest='pretrained',
-                        help='Disable timm online pretrained weights')
+                        help='Disable online ImageNet pretrained weights')
     parser.add_argument('--pretrained_path', default='', type=str,
                         help='Local pretrained weight path, such as /path/to/model.safetensors')
+    parser.add_argument('--pconv', default=True, type=str2bool,
+                        help='Replace later high-channel depthwise convolutions with PConv')
+    parser.add_argument('--pconv_n_div', default=4, type=int,
+                        help='Only 1 / pconv_n_div channels use spatial convolution')
+    parser.add_argument('--pconv_min_channels', default=512, type=int,
+                        help='Only replace depthwise convolutions whose channel count is at least this value')
+    parser.add_argument('--block_act', default='original',
+                        choices=['original', 'relu6', 'hardswish', 'silu', 'gelu'],
+                        help='Replace non-identity activations inside MobileNetV4 backbone blocks')
     parser.add_argument('--input-size', default=224, type=int, help='images input size')
     parser.add_argument('--model-ema', action='store_true')
     parser.add_argument('--no-model-ema', action='store_false', dest='model_ema')
@@ -385,9 +532,9 @@ def get_args_parser():
                         choices=['kingdom', 'phylum', 'class', 'order',
                                  'supercategory', 'family', 'genus', 'name'],
                         type=str, help='semantic granularity')
-    parser.add_argument('--output_dir', default=r'D:\WorkPlace\pythonProgram\DeepLearning\basemodels\MobileNetV4\fe2013\mn+ca+gemhead',
+    parser.add_argument('--output_dir', default=r'D:\WorkPlace\pythonProgram\DeepLearning\basemodels\MobileNetV4\fe2013\mn+ca+pconv+gemhead',
                         help='path where to save, empty for no saving')
-    parser.add_argument('--writer_output', default=r'D:\WorkPlace\pythonProgram\DeepLearning\basemodels\MobileNetV4\fe2013\mn+ca+gemhead',
+    parser.add_argument('--writer_output', default=r'D:\WorkPlace\pythonProgram\DeepLearning\basemodels\MobileNetV4\fe2013\mn+ca+pconv+gemhead',
                         help='path where to save SummaryWriter, empty for no saving')
     parser.add_argument('--device', default='cuda',
                         help='device to use for training / testing')
@@ -520,12 +667,18 @@ def main(args):
     # ========================
     #  ✅ 修复：关闭预训练 + 正确插入 LCA 注意力
     # ========================
-    model = MobileNetV4_CA_GeMHead(
+    model = MobileNetV4_CA_PConv_GeMHead(
         num_classes=args.nb_classes,
         model_name=args.model,
         pretrained=args.pretrained,
         pretrained_path=args.pretrained_path,
+        pconv=args.pconv,
+        pconv_n_div=args.pconv_n_div,
+        pconv_min_channels=args.pconv_min_channels,
+        block_act=args.block_act,
     )
+    print(f"PConv changes: {model.pconv_stats}")
+    print(f"Block activation changes: {model.block_act_stats}")
     if model.local_pretrained_msg is not None:
         print(f"Loaded local pretrained weights: {model.local_pretrained_msg}")
 
@@ -559,6 +712,11 @@ def main(args):
             if args.extra_attention_block:
                 for name, para in model.extra_attention_block.named_parameters():
                     para.requires_grad_(True)
+            if args.pconv:
+                for module in model.modules():
+                    if isinstance(module, PartialDepthwiseConv2d):
+                        for para in module.parameters():
+                            para.requires_grad_(True)
 
     model.to(device)
 
@@ -779,11 +937,15 @@ def main(args):
 
     # plot ROC curve and confusion matrix
     if args.predict and utils.is_main_process():
-        model_predict = MobileNetV4_CA_GeMHead(
+        model_predict = MobileNetV4_CA_PConv_GeMHead(
             num_classes=args.nb_classes,
             model_name=args.model,
             pretrained=False,
             pretrained_path="",
+            pconv=args.pconv,
+            pconv_n_div=args.pconv_n_div,
+            pconv_min_channels=args.pconv_min_channels,
+            block_act=args.block_act,
         )
         model_predict.to(device)
         print('*******************STARTING PREDICT*******************')
