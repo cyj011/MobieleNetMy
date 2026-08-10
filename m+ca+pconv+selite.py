@@ -124,17 +124,20 @@ class CoordAtt(nn.Module):
         return out
 
 
-class GeM(nn.Module):
-    def __init__(self, p=3.0, eps=1e-6):
+class SELite(nn.Module):
+    def __init__(self, channels, reduction=16):
         super().__init__()
-        self.p = nn.Parameter(torch.ones(1) * p)
-        self.eps = eps
+        hidden = max(8, channels // reduction)
+        self.pool = nn.AdaptiveAvgPool2d(1)
+        self.fc = nn.Sequential(
+            nn.Conv2d(channels, hidden, kernel_size=1, bias=True),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(hidden, channels, kernel_size=1, bias=True),
+            nn.Sigmoid(),
+        )
 
     def forward(self, x):
-        p = self.p.clamp(min=self.eps)
-        x = x.clamp(min=self.eps).pow(p)
-        x = F.avg_pool2d(x, x.shape[-2:]).pow(1.0 / p)
-        return x.flatten(1)
+        return x * self.fc(self.pool(x))
 
 
 MOBILENETV4_PRETRAINED_ALIASES = {
@@ -308,7 +311,7 @@ def _replace_block_activations(module, activation_name):
     return replaced
 
 
-class MobileNetV4_CA_PConv_GeMHead(nn.Module):
+class MobileNetV4_CA_PConv_SELite(nn.Module):
 
     def __init__(
             self,
@@ -358,10 +361,8 @@ class MobileNetV4_CA_PConv_GeMHead(nn.Module):
             raise RuntimeError("Cannot infer MobileNetV4 feature dimension from backbone.num_features")
 
         self.ca = CoordAtt(feature_dim)
+        self.se_lite = SELite(feature_dim)
 
-        self.gem = GeM()
-        self.head_bn = nn.BatchNorm1d(feature_dim)
-        self.head_drop = nn.Dropout(p=0.2)
         self.classifier = nn.Linear(
             feature_dim,
             num_classes
@@ -372,11 +373,10 @@ class MobileNetV4_CA_PConv_GeMHead(nn.Module):
         x = self.backbone.forward_features(x)
 
         x = self.ca(x)
+        x = self.se_lite(x)
 
-        x = self.gem(x)
+        x = x.mean((2, 3))
 
-        x = self.head_bn(x)
-        x = self.head_drop(x)
         x = self.classifier(x)
 
         return x
@@ -532,9 +532,9 @@ def get_args_parser():
                         choices=['kingdom', 'phylum', 'class', 'order',
                                  'supercategory', 'family', 'genus', 'name'],
                         type=str, help='semantic granularity')
-    parser.add_argument('--output_dir', default=r'D:\WorkPlace\pythonProgram\DeepLearning\basemodels\MobileNetV4\fe2013\mn+ca+pconv+gemhead',
+    parser.add_argument('--output_dir', default=r'D:\WorkPlace\pythonProgram\DeepLearning\basemodels\MobileNetV4\fe2013\mn+ca+pconv+selite',
                         help='path where to save, empty for no saving')
-    parser.add_argument('--writer_output', default=r'D:\WorkPlace\pythonProgram\DeepLearning\basemodels\MobileNetV4\fe2013\mn+ca+pconv+gemhead',
+    parser.add_argument('--writer_output', default=r'D:\WorkPlace\pythonProgram\DeepLearning\basemodels\MobileNetV4\fe2013\mn+ca+pconv+selite',
                         help='path where to save SummaryWriter, empty for no saving')
     parser.add_argument('--device', default='cuda',
                         help='device to use for training / testing')
@@ -667,7 +667,7 @@ def main(args):
     # ========================
     #  ✅ 修复：关闭预训练 + 正确插入 LCA 注意力
     # ========================
-    model = MobileNetV4_CA_PConv_GeMHead(
+    model = MobileNetV4_CA_PConv_SELite(
         num_classes=args.nb_classes,
         model_name=args.model,
         pretrained=args.pretrained,
@@ -937,7 +937,7 @@ def main(args):
 
     # plot ROC curve and confusion matrix
     if args.predict and utils.is_main_process():
-        model_predict = MobileNetV4_CA_PConv_GeMHead(
+        model_predict = MobileNetV4_CA_PConv_SELite(
             num_classes=args.nb_classes,
             model_name=args.model,
             pretrained=False,

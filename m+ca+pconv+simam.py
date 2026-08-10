@@ -17,9 +17,7 @@ import warnings
 warnings.filterwarnings("ignore")
 import argparse
 import datetime
-import math
 import numpy as np
-import sys
 import time
 import torch
 import torch.backends.cudnn as cudnn
@@ -53,12 +51,6 @@ from datasets import build_dataset
 from datasets.threeaugment import new_data_aug_generator
 
 from estimate_model import Predictor, Plot_ROC, OptAUC
-
-
-def set_bn_state(model):
-    for m in model.modules():
-        if isinstance(m, torch.nn.modules.batchnorm._BatchNorm):
-            m.eval()
 
 
 def str2bool(v):
@@ -132,41 +124,17 @@ class CoordAtt(nn.Module):
         return out
 
 
-class ArcCosMarginHead(nn.Module):
-    def __init__(self, in_features, num_classes, head_type="arcface", s=30.0, m=0.35):
+class SimAM(nn.Module):
+    def __init__(self, e_lambda=1e-4):
         super().__init__()
-        self.weight = nn.Parameter(torch.empty(num_classes, in_features))
-        nn.init.xavier_uniform_(self.weight)
-        self.head_type = head_type
-        self.s = s
-        self.m = m
+        self.e_lambda = e_lambda
 
-        self.cos_m = math.cos(m)
-        self.sin_m = math.sin(m)
-        self.th = math.cos(math.pi - m)
-        self.mm = math.sin(math.pi - m) * m
-
-    def forward(self, x, target=None):
-        cosine = F.linear(F.normalize(x), F.normalize(self.weight))
-        if target is None:
-            return cosine * self.s
-
-        if target.ndim != 1:
-            raise ValueError("ArcFace/CosFace head requires integer class targets. Disable mixup/cutmix.")
-
-        if self.head_type == "arcface":
-            sine = torch.sqrt((1.0 - torch.pow(cosine, 2)).clamp(0, 1))
-            phi = cosine * self.cos_m - sine * self.sin_m
-            phi = torch.where(cosine > self.th, phi, cosine - self.mm)
-        elif self.head_type == "cosface":
-            phi = cosine - self.m
-        else:
-            raise ValueError(f"Unsupported margin head: {self.head_type}")
-
-        one_hot = torch.zeros_like(cosine)
-        one_hot.scatter_(1, target.view(-1, 1), 1.0)
-        logits = one_hot * phi + (1.0 - one_hot) * cosine
-        return logits * self.s
+    def forward(self, x):
+        b, c, h, w = x.size()
+        n = h * w - 1
+        x_minus_mu_square = (x - x.mean(dim=(2, 3), keepdim=True)).pow(2)
+        y = x_minus_mu_square / (4 * (x_minus_mu_square.sum(dim=(2, 3), keepdim=True) / n + self.e_lambda)) + 0.5
+        return x * torch.sigmoid(y)
 
 
 MOBILENETV4_PRETRAINED_ALIASES = {
@@ -340,7 +308,7 @@ def _replace_block_activations(module, activation_name):
     return replaced
 
 
-class MobileNetV4_CA_PConv_MarginHead(nn.Module):
+class MobileNetV4_CA_PConv_SimAM(nn.Module):
 
     def __init__(
             self,
@@ -351,10 +319,7 @@ class MobileNetV4_CA_PConv_MarginHead(nn.Module):
             pconv=True,
             pconv_n_div=4,
             pconv_min_channels=512,
-            block_act="original",
-            margin_head="arcface",
-            margin_s=30.0,
-            margin_m=0.35):
+            block_act="original"):
 
         super().__init__()
         use_online_pretrained = pretrained and not pretrained_path
@@ -393,84 +358,25 @@ class MobileNetV4_CA_PConv_MarginHead(nn.Module):
             raise RuntimeError("Cannot infer MobileNetV4 feature dimension from backbone.num_features")
 
         self.ca = CoordAtt(feature_dim)
+        self.simam = SimAM()
 
-        self.neck = nn.BatchNorm1d(feature_dim)
-        self.neck_drop = nn.Dropout(p=0.2)
-        self.classifier = ArcCosMarginHead(
+        self.classifier = nn.Linear(
             feature_dim,
-            num_classes,
-            head_type=margin_head,
-            s=margin_s,
-            m=margin_m,
+            num_classes
         )
 
-    def forward(self, x, target=None):
+    def forward(self, x):
 
         x = self.backbone.forward_features(x)
 
         x = self.ca(x)
+        x = self.simam(x)
 
         x = x.mean((2, 3))
 
-        x = self.neck(x)
-        x = self.neck_drop(x)
-        x = self.classifier(x, target)
+        x = self.classifier(x)
 
         return x
-
-
-def train_one_epoch_margin(model: torch.nn.Module, criterion: DistillationLoss,
-                           data_loader, optimizer: torch.optim.Optimizer,
-                           device: torch.device, epoch: int, loss_scaler,
-                           clip_grad: float = 0, clip_mode: str = 'norm',
-                           model_ema: ModelEma = None, set_training_mode=True,
-                           set_bn_eval=False, writer=None, args=None):
-    model.train(set_training_mode)
-    num_steps = len(data_loader)
-
-    if set_bn_eval:
-        set_bn_state(model)
-
-    metric_logger = utils.MetricLogger(delimiter="  ")
-    metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
-    header = 'Epoch: [{}]'.format(epoch)
-    print_freq = 50
-
-    for idx, (samples, targets) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
-        samples = samples.to(device, non_blocking=True)
-        targets = targets.to(device, non_blocking=True)
-
-        with torch.cuda.amp.autocast():
-            outputs = model(samples, targets)
-            loss = criterion(samples, outputs, targets)
-
-        loss_value = loss.item()
-        if not math.isfinite(loss_value):
-            print("Loss is {}, stopping training".format(loss_value))
-            sys.exit(1)
-
-        optimizer.zero_grad()
-        is_second_order = hasattr(optimizer, 'is_second_order') and optimizer.is_second_order
-        with torch.cuda.amp.autocast():
-            loss_scaler(loss, optimizer, clip_grad=clip_grad, clip_mode=clip_mode,
-                        parameters=model.parameters(), create_graph=is_second_order)
-
-        torch.cuda.synchronize()
-        if model_ema is not None:
-            model_ema.update(model)
-
-        learning_rate = optimizer.param_groups[0]["lr"]
-        metric_logger.update(loss=loss_value)
-        metric_logger.update(lr=learning_rate)
-
-        if idx % print_freq == 0 and args.local_rank == 0:
-            iter_all_count = epoch * num_steps + idx
-            writer.add_scalar('loss', loss, iter_all_count)
-            writer.add_scalar('lr', learning_rate, iter_all_count)
-
-    metric_logger.synchronize_between_processes()
-    print("Averaged stats:", metric_logger)
-    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
 def get_args_parser():
     parser = argparse.ArgumentParser(
@@ -503,12 +409,6 @@ def get_args_parser():
     parser.add_argument('--block_act', default='original',
                         choices=['original', 'relu6', 'hardswish', 'silu', 'gelu'],
                         help='Replace non-identity activations inside MobileNetV4 backbone blocks')
-    parser.add_argument('--margin_head', default='arcface', choices=['arcface', 'cosface'],
-                        help='Margin classifier type')
-    parser.add_argument('--margin_s', default=30.0, type=float,
-                        help='Scale value for ArcFace/CosFace logits')
-    parser.add_argument('--margin_m', default=0.35, type=float,
-                        help='Margin value for ArcFace/CosFace head')
     parser.add_argument('--input-size', default=224, type=int, help='images input size')
     parser.add_argument('--model-ema', action='store_true')
     parser.add_argument('--no-model-ema', action='store_false', dest='model_ema')
@@ -567,7 +467,7 @@ def get_args_parser():
     parser.add_argument('--aa', type=str, default='rand-m9-mstd0.5-inc1', metavar='NAME',
                         help='Use AutoAugment policy. "v0" or "original". " + \
                              "(default: rand-m9-mstd0.5-inc1)'),
-    parser.add_argument('--smoothing', type=float, default=0.0,
+    parser.add_argument('--smoothing', type=float, default=0.1,
                         help='Label smoothing (default: 0.1)')
     parser.add_argument('--train-interpolation', type=str, default='bicubic',
                         help='Training interpolation (random, bilinear, bicubic default: "bicubic")')
@@ -587,9 +487,9 @@ def get_args_parser():
                         help='Do not random erase first (clean) augmentation split')
 
     # Mixup params
-    parser.add_argument('--mixup', type=float, default=0.0,
+    parser.add_argument('--mixup', type=float, default=0.8,
                         help='mixup alpha, mixup enabled if > 0. (default: 0.8)')
-    parser.add_argument('--cutmix', type=float, default=0.0,
+    parser.add_argument('--cutmix', type=float, default=1.0,
                         help='cutmix alpha, cutmix enabled if > 0. (default: 1.0)')
     parser.add_argument('--cutmix-minmax', type=float, nargs='+', default=None,
                         help='cutmix min/max ratio, overrides alpha and enables cutmix if set (default: None)')
@@ -629,9 +529,9 @@ def get_args_parser():
                         choices=['kingdom', 'phylum', 'class', 'order',
                                  'supercategory', 'family', 'genus', 'name'],
                         type=str, help='semantic granularity')
-    parser.add_argument('--output_dir', default=r'D:\WorkPlace\pythonProgram\DeepLearning\basemodels\MobileNetV4\fe2013\mn+ca+pconv+marginhead',
+    parser.add_argument('--output_dir', default=r'D:\WorkPlace\pythonProgram\DeepLearning\basemodels\MobileNetV4\fe2013\mn+ca+pconv+simam',
                         help='path where to save, empty for no saving')
-    parser.add_argument('--writer_output', default=r'D:\WorkPlace\pythonProgram\DeepLearning\basemodels\MobileNetV4\fe2013\mn+ca+pconv+marginhead',
+    parser.add_argument('--writer_output', default=r'D:\WorkPlace\pythonProgram\DeepLearning\basemodels\MobileNetV4\fe2013\mn+ca+pconv+simam',
                         help='path where to save SummaryWriter, empty for no saving')
     parser.add_argument('--device', default='cuda',
                         help='device to use for training / testing')
@@ -745,7 +645,10 @@ def main(args):
     mixup_fn = None
     mixup_active = args.mixup > 0 or args.cutmix > 0. or args.cutmix_minmax is not None
     if mixup_active:
-        raise ValueError("ArcFace/CosFace margin head requires hard labels. Set --mixup 0 --cutmix 0.")
+        mixup_fn = Mixup(
+            mixup_alpha=args.mixup, cutmix_alpha=args.cutmix, cutmix_minmax=args.cutmix_minmax,
+            prob=args.mixup_prob, switch_prob=args.mixup_switch_prob, mode=args.mixup_mode,
+            label_smoothing=args.smoothing, num_classes=args.nb_classes)
 
     print(f"Creating model: {args.model}")
 
@@ -761,7 +664,7 @@ def main(args):
     # ========================
     #  ✅ 修复：关闭预训练 + 正确插入 LCA 注意力
     # ========================
-    model = MobileNetV4_CA_PConv_MarginHead(
+    model = MobileNetV4_CA_PConv_SimAM(
         num_classes=args.nb_classes,
         model_name=args.model,
         pretrained=args.pretrained,
@@ -770,9 +673,6 @@ def main(args):
         pconv_n_div=args.pconv_n_div,
         pconv_min_channels=args.pconv_min_channels,
         block_act=args.block_act,
-        margin_head=args.margin_head,
-        margin_s=args.margin_s,
-        margin_m=args.margin_m,
     )
     print(f"PConv changes: {model.pconv_stats}")
     print(f"Block activation changes: {model.block_act_stats}")
@@ -957,10 +857,10 @@ def main(args):
         if args.distributed:
             data_loader_train.sampler.set_epoch(epoch)
 
-        train_stats = train_one_epoch_margin(
+        train_stats = train_one_epoch(
             model, criterion, data_loader_train,
             optimizer, device, epoch, loss_scaler,
-            args.clip_grad, args.clip_mode, model_ema,
+            args.clip_grad, args.clip_mode, model_ema, mixup_fn,
             # set_training_mode=args.finetune == '',  # keep in eval mode during finetuning
             set_training_mode=True,
             set_bn_eval=args.set_bn_eval,  # set bn to eval if finetune
@@ -1034,7 +934,7 @@ def main(args):
 
     # plot ROC curve and confusion matrix
     if args.predict and utils.is_main_process():
-        model_predict = MobileNetV4_CA_PConv_MarginHead(
+        model_predict = MobileNetV4_CA_PConv_SimAM(
             num_classes=args.nb_classes,
             model_name=args.model,
             pretrained=False,
@@ -1043,9 +943,6 @@ def main(args):
             pconv_n_div=args.pconv_n_div,
             pconv_min_channels=args.pconv_min_channels,
             block_act=args.block_act,
-            margin_head=args.margin_head,
-            margin_s=args.margin_s,
-            margin_m=args.margin_m,
         )
         model_predict.to(device)
         print('*******************STARTING PREDICT*******************')

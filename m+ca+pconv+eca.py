@@ -17,6 +17,7 @@ import warnings
 warnings.filterwarnings("ignore")
 import argparse
 import datetime
+import math
 import numpy as np
 import time
 import torch
@@ -122,6 +123,23 @@ class CoordAtt(nn.Module):
         out = identity * a_h * a_w
 
         return out
+
+
+class ECALayer(nn.Module):
+    def __init__(self, channels, gamma=2, b=1):
+        super().__init__()
+        kernel_size = int(abs((math.log2(channels) + b) / gamma))
+        kernel_size = kernel_size if kernel_size % 2 else kernel_size + 1
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.conv = nn.Conv1d(1, 1, kernel_size=kernel_size,
+                              padding=(kernel_size - 1) // 2, bias=False)
+
+    def forward(self, x):
+        y = self.avg_pool(x).squeeze(-1).transpose(-1, -2)
+        y = self.conv(y).transpose(-1, -2).unsqueeze(-1)
+        y = torch.sigmoid(y)
+        return x * y
+
 
 MOBILENETV4_PRETRAINED_ALIASES = {
     "mobilenetv4_conv_small_050": "mobilenetv4_conv_small_050.e3000_r224_in1k",
@@ -294,7 +312,7 @@ def _replace_block_activations(module, activation_name):
     return replaced
 
 
-class MobileNetV4_CA_PConv_AvgMaxHead(nn.Module):
+class MobileNetV4_CA_PConv_ECA(nn.Module):
 
     def __init__(
             self,
@@ -344,11 +362,10 @@ class MobileNetV4_CA_PConv_AvgMaxHead(nn.Module):
             raise RuntimeError("Cannot infer MobileNetV4 feature dimension from backbone.num_features")
 
         self.ca = CoordAtt(feature_dim)
+        self.eca = ECALayer(feature_dim)
 
-        self.head_bn = nn.BatchNorm1d(feature_dim * 2)
-        self.head_drop = nn.Dropout(p=0.2)
         self.classifier = nn.Linear(
-            feature_dim * 2,
+            feature_dim,
             num_classes
         )
 
@@ -357,13 +374,10 @@ class MobileNetV4_CA_PConv_AvgMaxHead(nn.Module):
         x = self.backbone.forward_features(x)
 
         x = self.ca(x)
+        x = self.eca(x)
 
-        avg_x = x.mean((2, 3))
-        max_x = x.amax((2, 3))
-        x = torch.cat([avg_x, max_x], dim=1)
+        x = x.mean((2, 3))
 
-        x = self.head_bn(x)
-        x = self.head_drop(x)
         x = self.classifier(x)
 
         return x
@@ -519,9 +533,9 @@ def get_args_parser():
                         choices=['kingdom', 'phylum', 'class', 'order',
                                  'supercategory', 'family', 'genus', 'name'],
                         type=str, help='semantic granularity')
-    parser.add_argument('--output_dir', default=r'D:\WorkPlace\pythonProgram\DeepLearning\basemodels\MobileNetV4\fe2013\mn+ca+pconv+avgmaxhead',
+    parser.add_argument('--output_dir', default=r'D:\WorkPlace\pythonProgram\DeepLearning\basemodels\MobileNetV4\fe2013\mn+ca+pconv+eca',
                         help='path where to save, empty for no saving')
-    parser.add_argument('--writer_output', default=r'D:\WorkPlace\pythonProgram\DeepLearning\basemodels\MobileNetV4\fe2013\mn+ca+pconv+avgmaxhead',
+    parser.add_argument('--writer_output', default=r'D:\WorkPlace\pythonProgram\DeepLearning\basemodels\MobileNetV4\fe2013\mn+ca+pconv+eca',
                         help='path where to save SummaryWriter, empty for no saving')
     parser.add_argument('--device', default='cuda',
                         help='device to use for training / testing')
@@ -654,7 +668,7 @@ def main(args):
     # ========================
     #  ✅ 修复：关闭预训练 + 正确插入 LCA 注意力
     # ========================
-    model = MobileNetV4_CA_PConv_AvgMaxHead(
+    model = MobileNetV4_CA_PConv_ECA(
         num_classes=args.nb_classes,
         model_name=args.model,
         pretrained=args.pretrained,
@@ -924,7 +938,7 @@ def main(args):
 
     # plot ROC curve and confusion matrix
     if args.predict and utils.is_main_process():
-        model_predict = MobileNetV4_CA_PConv_AvgMaxHead(
+        model_predict = MobileNetV4_CA_PConv_ECA(
             num_classes=args.nb_classes,
             model_name=args.model,
             pretrained=False,
