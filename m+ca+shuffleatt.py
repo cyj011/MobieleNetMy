@@ -1,4 +1,4 @@
-""" ImageNet Training Script
+﻿""" ImageNet Training Script
 
 This is intended to be a lean and easily modifiable ImageNet training script that reproduces ImageNet
 training results with some of the latest networks and training techniques. It favours canonical PyTorch
@@ -123,37 +123,45 @@ class CoordAtt(nn.Module):
 
         return out
 
-
-class DropPath(nn.Module):
-    def __init__(self, drop_prob=0.1):
+class ShuffleAttention(nn.Module):
+    def __init__(self, channels, groups=8):
         super().__init__()
-        self.drop_prob = drop_prob
+        groups = min(groups, max(1, channels // 2))
+        while groups > 1 and channels % (2 * groups) != 0:
+            groups -= 1
+
+        self.groups = groups
+        branch_channels = channels // (2 * groups)
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.gn = nn.GroupNorm(1, branch_channels)
+        self.cweight = nn.Parameter(torch.zeros(1, branch_channels, 1, 1))
+        self.cbias = nn.Parameter(torch.ones(1, branch_channels, 1, 1))
+        self.sweight = nn.Parameter(torch.zeros(1, branch_channels, 1, 1))
+        self.sbias = nn.Parameter(torch.ones(1, branch_channels, 1, 1))
+
+    @staticmethod
+    def channel_shuffle(x, groups):
+        b, c, h, w = x.size()
+        x = x.view(b, groups, c // groups, h, w)
+        x = x.transpose(1, 2).contiguous()
+        return x.view(b, c, h, w)
 
     def forward(self, x):
-        if self.drop_prob == 0.0 or not self.training:
-            return x
-        keep_prob = 1.0 - self.drop_prob
-        shape = (x.shape[0],) + (1,) * (x.ndim - 1)
-        random_tensor = keep_prob + torch.rand(shape, dtype=x.dtype, device=x.device)
-        random_tensor.floor_()
-        return x.div(keep_prob) * random_tensor
+        b, c, h, w = x.size()
+        x = x.view(b * self.groups, -1, h, w)
+        x_channel, x_spatial = x.chunk(2, dim=1)
 
+        channel_attn = self.avg_pool(x_channel)
+        channel_attn = self.cweight * channel_attn + self.cbias
+        x_channel = x_channel * torch.sigmoid(channel_attn)
 
-class DropPathRefine(nn.Module):
-    def __init__(self, channels, drop_prob=0.1):
-        super().__init__()
-        self.refine = nn.Sequential(
-            nn.Conv2d(channels, channels, kernel_size=3, padding=1, groups=channels, bias=False),
-            nn.BatchNorm2d(channels),
-            nn.SiLU(inplace=True),
-            nn.Conv2d(channels, channels, kernel_size=1, bias=False),
-            nn.BatchNorm2d(channels),
-        )
-        self.drop_path = DropPath(drop_prob)
+        spatial_attn = self.gn(x_spatial)
+        spatial_attn = self.sweight * spatial_attn + self.sbias
+        x_spatial = x_spatial * torch.sigmoid(spatial_attn)
 
-    def forward(self, x):
-        return x + self.drop_path(self.refine(x))
-
+        out = torch.cat([x_channel, x_spatial], dim=1)
+        out = out.view(b, c, h, w)
+        return self.channel_shuffle(out, 2)
 
 MOBILENETV4_PRETRAINED_ALIASES = {
     "mobilenetv4_conv_small_050": "mobilenetv4_conv_small_050.e3000_r224_in1k",
@@ -326,7 +334,7 @@ def _replace_block_activations(module, activation_name):
     return replaced
 
 
-class MobileNetV4_CA_PConv_DropPath(nn.Module):
+class MobileNetV4_CA_ShuffleAtt(nn.Module):
 
     def __init__(
             self,
@@ -334,7 +342,7 @@ class MobileNetV4_CA_PConv_DropPath(nn.Module):
             model_name="mobilenetv4_conv_large",
             pretrained=True,
             pretrained_path="",
-            pconv=True,
+            pconv=False,
             pconv_n_div=4,
             pconv_min_channels=512,
             block_act="original"):
@@ -376,7 +384,7 @@ class MobileNetV4_CA_PConv_DropPath(nn.Module):
             raise RuntimeError("Cannot infer MobileNetV4 feature dimension from backbone.num_features")
 
         self.ca = CoordAtt(feature_dim)
-        self.drop_path_refine = DropPathRefine(feature_dim)
+        self.shuffle_att = ShuffleAttention(feature_dim)
 
         self.classifier = nn.Linear(
             feature_dim,
@@ -388,7 +396,7 @@ class MobileNetV4_CA_PConv_DropPath(nn.Module):
         x = self.backbone.forward_features(x)
 
         x = self.ca(x)
-        x = self.drop_path_refine(x)
+        x = self.shuffle_att(x)
 
         x = x.mean((2, 3))
 
@@ -547,9 +555,9 @@ def get_args_parser():
                         choices=['kingdom', 'phylum', 'class', 'order',
                                  'supercategory', 'family', 'genus', 'name'],
                         type=str, help='semantic granularity')
-    parser.add_argument('--output_dir', default=r'D:\WorkPlace\pythonProgram\DeepLearning\basemodels\MobileNetV4\fe2013\mn+ca+pconv+droppath',
+    parser.add_argument('--output_dir', default=r'D:\WorkPlace\pythonProgram\DeepLearning\basemodels\MobileNetV4\fe2013\mn+ca+shuffleatt',
                         help='path where to save, empty for no saving')
-    parser.add_argument('--writer_output', default=r'D:\WorkPlace\pythonProgram\DeepLearning\basemodels\MobileNetV4\fe2013\mn+ca+pconv+droppath',
+    parser.add_argument('--writer_output', default=r'D:\WorkPlace\pythonProgram\DeepLearning\basemodels\MobileNetV4\fe2013\mn+ca+shuffleatt',
                         help='path where to save SummaryWriter, empty for no saving')
     parser.add_argument('--device', default='cuda',
                         help='device to use for training / testing')
@@ -680,14 +688,13 @@ def main(args):
 
 
     # ========================
-    #  ✅ 修复：关闭预训练 + 正确插入 LCA 注意力
-    # ========================
-    model = MobileNetV4_CA_PConv_DropPath(
+    #  鉁?淇锛氬叧闂璁粌 + 姝ｇ‘鎻掑叆 LCA 娉ㄦ剰鍔?    # ========================
+    model = MobileNetV4_CA_ShuffleAtt(
         num_classes=args.nb_classes,
         model_name=args.model,
         pretrained=args.pretrained,
         pretrained_path=args.pretrained_path,
-        pconv=args.pconv,
+        pconv=False,
         pconv_n_div=args.pconv_n_div,
         pconv_min_channels=args.pconv_min_channels,
         block_act=args.block_act,
@@ -834,8 +841,8 @@ def main(args):
             )
 
 
-        # 加载模型
-        msg = model_without_ddp.load_state_dict(checkpoint['model'], strict=False)  # 👈 加个 strict=False 防报错
+        # 鍔犺浇妯″瀷
+        msg = model_without_ddp.load_state_dict(checkpoint['model'], strict=False)
         print(msg)
 
         if not args.eval and 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint and 'epoch' in checkpoint:
@@ -844,20 +851,19 @@ def main(args):
             for state in optimizer.state.values():
                 for k, v in state.items():
                     if isinstance(v, torch.Tensor):
-                        state[k] = v.to(device)  # 👈 把 .cuda() 改成 .to(device) 更稳定
-
+                        state[k] = v.to(device)  # 馃憟 鎶?.cuda() 鏀规垚 .to(device) 鏇寸ǔ瀹?
             lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
             max_accuracy = checkpoint['best_score']
             print(f'Now max accuracy is {max_accuracy}')
             args.start_epoch = checkpoint['epoch'] + 1
-            print(f"✅ 将从 Epoch {args.start_epoch} 继续训练")  # 👈 加个提示
+            print(f"Resume training from Epoch {args.start_epoch}")
 
             if args.model_ema:
                 utils._load_checkpoint_for_ema(model_ema, checkpoint['model_ema'])
             if 'scaler' in checkpoint:
                 loss_scaler.load_state_dict(checkpoint['scaler'])
 
-            print("✅✅✅ 训练已从断点恢复完成！")
+            print("Checkpoint resume completed")
 
     if args.eval:
         # util.replace_batchnorm(model) # Users may choose whether to merge Conv-BN layers during eval
@@ -909,10 +915,10 @@ def main(args):
                 'args': args,
             }, latest_ckpt_path)
 
-            print(f"✅ Latest checkpoint saved: {latest_ckpt_path}")
+            print(f"Latest checkpoint saved: {latest_ckpt_path}")
 
         # =========================
-        # 保存 best checkpoint
+        # 淇濆瓨 best checkpoint
         # =========================
         if max_accuracy < test_stats["acc1"]:
             max_accuracy = test_stats["acc1"]
@@ -922,7 +928,7 @@ def main(args):
                 f'{args.model}_best_checkpoint.pth'
             )
 
-            print(f"🏆 Saving BEST checkpoint to {best_ckpt_path}")
+            print(f"Saving BEST checkpoint to {best_ckpt_path}")
 
             utils.save_on_master({
                 'model': model_without_ddp.state_dict(),
@@ -952,7 +958,7 @@ def main(args):
 
     # plot ROC curve and confusion matrix
     if args.predict and utils.is_main_process():
-        model_predict = MobileNetV4_CA_PConv_DropPath(
+        model_predict = MobileNetV4_CA_ShuffleAtt(
             num_classes=args.nb_classes,
             model_name=args.model,
             pretrained=False,
@@ -978,3 +984,5 @@ if __name__ == '__main__':
     if args.output_dir:
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)
     main(args)
+
+

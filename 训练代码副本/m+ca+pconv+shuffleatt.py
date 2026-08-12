@@ -17,7 +17,6 @@ import warnings
 warnings.filterwarnings("ignore")
 import argparse
 import datetime
-import math
 import numpy as np
 import time
 import torch
@@ -125,20 +124,45 @@ class CoordAtt(nn.Module):
         return out
 
 
-class ECALayer(nn.Module):
-    def __init__(self, channels, gamma=2, b=1):
+class ShuffleAttention(nn.Module):
+    def __init__(self, channels, groups=8):
         super().__init__()
-        kernel_size = int(abs((math.log2(channels) + b) / gamma))
-        kernel_size = kernel_size if kernel_size % 2 else kernel_size + 1
+        groups = min(groups, max(1, channels // 2))
+        while groups > 1 and channels % (2 * groups) != 0:
+            groups -= 1
+
+        self.groups = groups
+        branch_channels = channels // (2 * groups)
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
-        self.conv = nn.Conv1d(1, 1, kernel_size=kernel_size,
-                              padding=(kernel_size - 1) // 2, bias=False)
+        self.gn = nn.GroupNorm(1, branch_channels)
+        self.cweight = nn.Parameter(torch.zeros(1, branch_channels, 1, 1))
+        self.cbias = nn.Parameter(torch.ones(1, branch_channels, 1, 1))
+        self.sweight = nn.Parameter(torch.zeros(1, branch_channels, 1, 1))
+        self.sbias = nn.Parameter(torch.ones(1, branch_channels, 1, 1))
+
+    @staticmethod
+    def channel_shuffle(x, groups):
+        b, c, h, w = x.size()
+        x = x.view(b, groups, c // groups, h, w)
+        x = x.transpose(1, 2).contiguous()
+        return x.view(b, c, h, w)
 
     def forward(self, x):
-        y = self.avg_pool(x).squeeze(-1).transpose(-1, -2)
-        y = self.conv(y).transpose(-1, -2).unsqueeze(-1)
-        y = torch.sigmoid(y)
-        return x * y
+        b, c, h, w = x.size()
+        x = x.view(b * self.groups, -1, h, w)
+        x_channel, x_spatial = x.chunk(2, dim=1)
+
+        channel_attn = self.avg_pool(x_channel)
+        channel_attn = self.cweight * channel_attn + self.cbias
+        x_channel = x_channel * torch.sigmoid(channel_attn)
+
+        spatial_attn = self.gn(x_spatial)
+        spatial_attn = self.sweight * spatial_attn + self.sbias
+        x_spatial = x_spatial * torch.sigmoid(spatial_attn)
+
+        out = torch.cat([x_channel, x_spatial], dim=1)
+        out = out.view(b, c, h, w)
+        return self.channel_shuffle(out, 2)
 
 
 MOBILENETV4_PRETRAINED_ALIASES = {
@@ -312,7 +336,7 @@ def _replace_block_activations(module, activation_name):
     return replaced
 
 
-class MobileNetV4_CA_PConv_ECA(nn.Module):
+class MobileNetV4_CA_PConv_ShuffleAtt(nn.Module):
 
     def __init__(
             self,
@@ -362,7 +386,7 @@ class MobileNetV4_CA_PConv_ECA(nn.Module):
             raise RuntimeError("Cannot infer MobileNetV4 feature dimension from backbone.num_features")
 
         self.ca = CoordAtt(feature_dim)
-        self.eca = ECALayer(feature_dim)
+        self.shuffle_att = ShuffleAttention(feature_dim)
 
         self.classifier = nn.Linear(
             feature_dim,
@@ -374,7 +398,7 @@ class MobileNetV4_CA_PConv_ECA(nn.Module):
         x = self.backbone.forward_features(x)
 
         x = self.ca(x)
-        x = self.eca(x)
+        x = self.shuffle_att(x)
 
         x = x.mean((2, 3))
 
@@ -533,9 +557,9 @@ def get_args_parser():
                         choices=['kingdom', 'phylum', 'class', 'order',
                                  'supercategory', 'family', 'genus', 'name'],
                         type=str, help='semantic granularity')
-    parser.add_argument('--output_dir', default=r'D:\WorkPlace\pythonProgram\DeepLearning\basemodels\MobileNetV4\fe2013\mn+ca+pconv+eca',
+    parser.add_argument('--output_dir', default=r'D:\WorkPlace\pythonProgram\DeepLearning\basemodels\MobileNetV4\fe2013\mn+ca+pconv+shuffleatt',
                         help='path where to save, empty for no saving')
-    parser.add_argument('--writer_output', default=r'D:\WorkPlace\pythonProgram\DeepLearning\basemodels\MobileNetV4\fe2013\mn+ca+pconv+eca',
+    parser.add_argument('--writer_output', default=r'D:\WorkPlace\pythonProgram\DeepLearning\basemodels\MobileNetV4\fe2013\mn+ca+pconv+shuffleatt',
                         help='path where to save SummaryWriter, empty for no saving')
     parser.add_argument('--device', default='cuda',
                         help='device to use for training / testing')
@@ -668,7 +692,7 @@ def main(args):
     # ========================
     #  ✅ 修复：关闭预训练 + 正确插入 LCA 注意力
     # ========================
-    model = MobileNetV4_CA_PConv_ECA(
+    model = MobileNetV4_CA_PConv_ShuffleAtt(
         num_classes=args.nb_classes,
         model_name=args.model,
         pretrained=args.pretrained,
@@ -938,7 +962,7 @@ def main(args):
 
     # plot ROC curve and confusion matrix
     if args.predict and utils.is_main_process():
-        model_predict = MobileNetV4_CA_PConv_ECA(
+        model_predict = MobileNetV4_CA_PConv_ShuffleAtt(
             num_classes=args.nb_classes,
             model_name=args.model,
             pretrained=False,
