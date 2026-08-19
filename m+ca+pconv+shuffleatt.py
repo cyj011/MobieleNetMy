@@ -63,6 +63,21 @@ def str2bool(v):
     raise argparse.ArgumentTypeError("Boolean value expected.")
 
 
+DEFAULT_LOCAL_PRETRAINED_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "pretrain",
+    "model.safetensors",
+)
+
+
+def resolve_pretrained_path(pretrained_path):
+    if pretrained_path:
+        return pretrained_path
+    if os.path.isfile(DEFAULT_LOCAL_PRETRAINED_PATH):
+        return DEFAULT_LOCAL_PRETRAINED_PATH
+    return ""
+
+
 class h_sigmoid(nn.Module):
     def __init__(self, inplace=True):
         super().__init__()
@@ -337,7 +352,7 @@ def _replace_block_activations(module, activation_name):
 class MobileNetV4_CA_PConv_ShuffleAtt(nn.Module):
 
     def __init__(
-            self,
+        self,
             num_classes,
             model_name="mobilenetv4_conv_large",
             pretrained=True,
@@ -348,6 +363,7 @@ class MobileNetV4_CA_PConv_ShuffleAtt(nn.Module):
             block_act="original"):
 
         super().__init__()
+        pretrained_path = resolve_pretrained_path(pretrained_path)
         use_online_pretrained = pretrained and not pretrained_path
         backbone_name = MOBILENETV4_PRETRAINED_ALIASES.get(model_name, model_name) if use_online_pretrained else model_name
 
@@ -693,7 +709,7 @@ def main(args):
         num_classes=args.nb_classes,
         model_name=args.model,
         pretrained=args.pretrained,
-        pretrained_path=args.pretrained_path,
+        pretrained_path=args.pretrained_path or DEFAULT_LOCAL_PRETRAINED_PATH,
         pconv=args.pconv,
         pconv_n_div=args.pconv_n_div,
         pconv_min_channels=args.pconv_min_channels,
