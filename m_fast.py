@@ -1,4 +1,4 @@
-""" ImageNet Training Script
+﻿""" ImageNet Training Script
 
 This is intended to be a lean and easily modifiable ImageNet training script that reproduces ImageNet
 training results with some of the latest networks and training techniques. It favours canonical PyTorch
@@ -49,6 +49,51 @@ from datasets import build_dataset
 from datasets.threeaugment import new_data_aug_generator
 
 from estimate_model import Predictor, Plot_ROC, OptAUC
+
+
+DEFAULT_LOCAL_PRETRAINED_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "pretrain",
+    "model.safetensors",
+)
+
+
+def _unwrap_state_dict(checkpoint):
+    if isinstance(checkpoint, dict):
+        for key in ("state_dict", "model", "model_state_dict"):
+            if key in checkpoint and isinstance(checkpoint[key], dict):
+                return checkpoint[key]
+    return checkpoint
+
+
+def _strip_prefix_if_present(state_dict, prefix):
+    if not state_dict:
+        return state_dict
+    keys = list(state_dict.keys())
+    if all(k.startswith(prefix) for k in keys):
+        return {k[len(prefix):]: v for k, v in state_dict.items()}
+    return state_dict
+
+
+def load_local_pretrained_backbone(model, pretrained_path):
+    if not os.path.isfile(pretrained_path):
+        raise FileNotFoundError(f"Local pretrained weight not found: {pretrained_path}")
+
+    if pretrained_path.endswith(".safetensors"):
+        checkpoint = load_file(pretrained_path, device="cpu")
+    else:
+        checkpoint = torch.load(pretrained_path, map_location="cpu")
+
+    state_dict = _unwrap_state_dict(checkpoint)
+    state_dict = _strip_prefix_if_present(state_dict, "module.")
+    state_dict = _strip_prefix_if_present(state_dict, "model.")
+    state_dict = _strip_prefix_if_present(state_dict, "backbone.")
+
+    for key in list(state_dict.keys()):
+        if key.startswith("classifier.") or key.startswith("head."):
+            del state_dict[key]
+
+    return model.load_state_dict(state_dict, strict=False)
 
 
 
@@ -322,14 +367,14 @@ def main(args):
 
 
     # ========================
-    #  ✅ 修复：关闭预训练 + 正确插入 LCA 注意力
-    # ========================
+    #  鉁?淇锛氬叧闂璁粌 + 姝ｇ‘鎻掑叆 LCA 娉ㄦ剰鍔?    # ========================
     model = timm.create_model(
-        "mobilenetv4_conv_large.e600_r384_in1k",
-        pretrained=True,  # 关闭联网下载，解决网络错误
+        args.model,
+        pretrained=False,
         num_classes=args.nb_classes,
-
     )
+    msg = load_local_pretrained_backbone(model, DEFAULT_LOCAL_PRETRAINED_PATH)
+    print(f"Loaded local pretrained weights: {msg}")
     model.reset_classifier(num_classes=args.nb_classes)
 
 
@@ -464,9 +509,8 @@ def main(args):
             )
 
 
-        # 加载模型
-        msg = model_without_ddp.load_state_dict(checkpoint['model'], strict=False)  # 👈 加个 strict=False 防报错
-        print(msg)
+        # 鍔犺浇妯″瀷
+        msg = model_without_ddp.load_state_dict(checkpoint['model'], strict=False)  # 馃憟 鍔犱釜 strict=False 闃叉姤閿?        print(msg)
 
         if not args.eval and 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint and 'epoch' in checkpoint:
 
@@ -474,20 +518,19 @@ def main(args):
             for state in optimizer.state.values():
                 for k, v in state.items():
                     if isinstance(v, torch.Tensor):
-                        state[k] = v.to(device)  # 👈 把 .cuda() 改成 .to(device) 更稳定
-
+                        state[k] = v.to(device)  # 馃憟 鎶?.cuda() 鏀规垚 .to(device) 鏇寸ǔ瀹?
             lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
             max_accuracy = checkpoint['best_score']
             print(f'Now max accuracy is {max_accuracy}')
             args.start_epoch = checkpoint['epoch'] + 1
-            print(f"✅ 将从 Epoch {args.start_epoch} 继续训练")  # 👈 加个提示
+            print(f"鉁?灏嗕粠 Epoch {args.start_epoch} 缁х画璁粌")  # 馃憟 鍔犱釜鎻愮ず
 
             if args.model_ema:
                 utils._load_checkpoint_for_ema(model_ema, checkpoint['model_ema'])
             if 'scaler' in checkpoint:
                 loss_scaler.load_state_dict(checkpoint['scaler'])
 
-            print("✅✅✅ 训练已从断点恢复完成！")
+            print("Resume from checkpoint completed.")
 
     if args.eval:
         # util.replace_batchnorm(model) # Users may choose whether to merge Conv-BN layers during eval
@@ -539,10 +582,10 @@ def main(args):
                 'args': args,
             }, latest_ckpt_path)
 
-            print(f"✅ Latest checkpoint saved: {latest_ckpt_path}")
+            print(f"鉁?Latest checkpoint saved: {latest_ckpt_path}")
 
         # =========================
-        # 保存 best checkpoint
+        # 淇濆瓨 best checkpoint
         # =========================
         if max_accuracy < test_stats["acc1"]:
             max_accuracy = test_stats["acc1"]
@@ -552,7 +595,7 @@ def main(args):
                 f'{args.model}_best_checkpoint.pth'
             )
 
-            print(f"🏆 Saving BEST checkpoint to {best_ckpt_path}")
+            print(f"馃弳 Saving BEST checkpoint to {best_ckpt_path}")
 
             utils.save_on_master({
                 'model': model_without_ddp.state_dict(),
