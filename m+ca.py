@@ -53,6 +53,51 @@ from datasets.threeaugment import new_data_aug_generator
 from estimate_model import Predictor, Plot_ROC, OptAUC
 
 
+DEFAULT_LOCAL_PRETRAINED_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "pretrain",
+    "model.safetensors",
+)
+
+
+def _unwrap_state_dict(checkpoint):
+    if isinstance(checkpoint, dict):
+        for key in ("state_dict", "model", "model_state_dict"):
+            if key in checkpoint and isinstance(checkpoint[key], dict):
+                return checkpoint[key]
+    return checkpoint
+
+
+def _strip_prefix_if_present(state_dict, prefix):
+    if not state_dict:
+        return state_dict
+    keys = list(state_dict.keys())
+    if all(k.startswith(prefix) for k in keys):
+        return {k[len(prefix):]: v for k, v in state_dict.items()}
+    return state_dict
+
+
+def load_local_pretrained_backbone(model, pretrained_path):
+    if not os.path.isfile(pretrained_path):
+        raise FileNotFoundError(f"Local pretrained weight not found: {pretrained_path}")
+
+    if pretrained_path.endswith(".safetensors"):
+        checkpoint = load_file(pretrained_path, device="cpu")
+    else:
+        checkpoint = torch.load(pretrained_path, map_location="cpu")
+
+    state_dict = _unwrap_state_dict(checkpoint)
+    state_dict = _strip_prefix_if_present(state_dict, "module.")
+    state_dict = _strip_prefix_if_present(state_dict, "model.")
+    state_dict = _strip_prefix_if_present(state_dict, "backbone.")
+
+    for key in list(state_dict.keys()):
+        if key.startswith("classifier.") or key.startswith("head."):
+            del state_dict[key]
+
+    return model.load_state_dict(state_dict, strict=False)
+
+
 class h_sigmoid(nn.Module):
     def __init__(self, inplace=True):
         super().__init__()
@@ -115,14 +160,18 @@ class CoordAtt(nn.Module):
 
 class MobileNetV4_CA(nn.Module):
 
-    def __init__(self, num_classes):
+    def __init__(self, num_classes, pretrained_path=DEFAULT_LOCAL_PRETRAINED_PATH):
 
         super().__init__()
 
         self.backbone = timm.create_model(
-            "mobilenetv4_conv_large.e600_r384_in1k",
-            pretrained=True,
+            "mobilenetv4_conv_large",
+            pretrained=False,
             num_classes=0
+        )
+        self.local_pretrained_msg = load_local_pretrained_backbone(
+            self.backbone,
+            pretrained_path,
         )
 
         self.ca = CoordAtt(960)
@@ -160,6 +209,8 @@ def get_args_parser():
                                  'mobilenetv4_conv_small_035', 'mobilenetv4_conv_small_050', 'mobilenetv4_conv_blur_medium'],
                         help='Name of model to train')
     parser.add_argument('--extra_attention_block', default=False, type=bool, help='Add an extra attention block')
+    parser.add_argument('--pretrained_path', default=DEFAULT_LOCAL_PRETRAINED_PATH, type=str,
+                        help='Local pretrained weight path')
     parser.add_argument('--input-size', default=224, type=int, help='images input size')
     parser.add_argument('--model-ema', action='store_true')
     parser.add_argument('--no-model-ema', action='store_false', dest='model_ema')
@@ -416,8 +467,10 @@ def main(args):
     #  ✅ 修复：关闭预训练 + 正确插入 LCA 注意力
     # ========================
     model = MobileNetV4_CA(
-        num_classes=args.nb_classes
+        num_classes=args.nb_classes,
+        pretrained_path=args.pretrained_path,
     )
+    print(f"Loaded local pretrained weights: {model.local_pretrained_msg}")
 
 
 
