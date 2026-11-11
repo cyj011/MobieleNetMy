@@ -1,18 +1,28 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# FER+ data path supplied by the user. Passing FER2013Test is supported:
-# datasets/mydataset.py resolves the sibling FER2013Train and FER2013Valid.
-DATA_ROOT="${1:-/mnt/data/yanyi2025/cyj/ferplus/FER2013Test}"
-OUTPUT_ROOT="${2:-/mnt/data/yanyi2025/cyj/MobieleNetMy/ferplus}"
+# FER+ folder layout: DATA_ROOT/train, DATA_ROOT/val and DATA_ROOT/test.
+# Each split contains one subdirectory per emotion class.
+DATA_ROOT="${1:-/mnt/data/yanyi2025/cyj/ferplus/fer_img}"
+OUTPUT_ROOT="${2:-/mnt/data/yanyi2025/cyj/MobieleNetMy/ferplus/fer_img_8class}"
 WHICH="${3:-all}"
 PYTHON="${PYTHON:-python}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PRETRAINED_PATH="${SCRIPT_DIR}/pretrain/model.safetensors"
+cd "$SCRIPT_DIR"
+
+if [[ ! -d "${DATA_ROOT}/train" || ! -d "${DATA_ROOT}/val" ]]; then
+  echo "Dataset must contain ${DATA_ROOT}/train and ${DATA_ROOT}/val" >&2
+  exit 1
+fi
+if [[ ! -f "$PRETRAINED_PATH" ]]; then
+  echo "Offline pretrained weight not found: $PRETRAINED_PATH" >&2
+  exit 1
+fi
 
 COMMON_ARGS=(
   --data_root "$DATA_ROOT"
-  --nb_classes 7
+  --nb_classes 8
   --model mobilenetv4_conv_large
   --input-size 224
   --batch-size 64
@@ -44,6 +54,7 @@ case "$WHICH" in
   ca_pconv) run_one baseline_ca_pconv 'm+ca+pconv.py' ;;
   ca_shuffleatt) run_one baseline_ca_shuffleatt 'm+ca+shuffleatt.py' ;;
   pconv_shuffleatt) run_one baseline_pconv_shuffleatt 'm+pconv+shuffleatt.py' ;;
+  ca_pconv_shuffleatt) run_one baseline_ca_pconv_shuffleatt 'm+ca+pconv+shuffleatt.py' ;;
   all)
     run_one baseline m_fast.py
     run_one baseline_ca 'm+ca.py'
@@ -55,7 +66,7 @@ case "$WHICH" in
     run_one baseline_ca_pconv_shuffleatt 'm+ca+pconv+shuffleatt.py'
     ;;
   *)
-    echo "Usage: $0 [FER2013Test-or-data-root] [output-root] [all|baseline|ca|pconv|shuffleatt|ca_pconv|ca_shuffleatt|pconv_shuffleatt]" >&2
+    echo "Usage: $0 [data-root] [output-root] [all|baseline|ca|pconv|shuffleatt|ca_pconv|ca_shuffleatt|pconv_shuffleatt|ca_pconv_shuffleatt]" >&2
     exit 2
     ;;
 esac
