@@ -1,0 +1,699 @@
+SPARSE ATTENTION TO EMOTION: EFFICIENT FACIAL EMOTION RECOGNITION VIA
+TOKEN REDUCTION
+Aya Manel Zitouni‡
+
+Aicha Zenakhri‡
+
+Karim Haroun‡
+
+Larbi Boubchir
+
+LIASD Laboratory, University of Paris 8, France
+
+Facial Emotion Recognition (FER) is an important task that
+has significant implications across various fields such as biometrics, health, and human-computer interaction. Current
+Vision Transformer-based approaches display quadratic complexity O(N 2 ), with N being the input sequence length, making them cumbersome to deploy at the edge. In this paper, we
+hypothesize that the FER task does not necessarily require all
+facial information to correctly interpret emotional states, as
+specific regions such as the eyes, the mouth, and parts of the
+cheeks carry discriminative information that can be sufficient
+to recognize emotions. Based on this, we propose Sparse Attention to Emotion (SAE), a model that discards image tokens that have no added value to the emotional context, while
+preserving good accuracy and achieving a significant gain in
+computational cost. Surprisingly, even after suppressing 90%
+of the image tokens, our model achieves competitive accuracy to state of the art methods at much lower cost, providing
+a lightweight Facial Emotion Recognition approach. Experimental results demonstrate that SAE achieves new state of the
+art results on the RAF-DB dataset while reducing the computational complexity by up to 90%.
+Index Terms— Vision Transformers, Model Compression, Token Pruning, Facial Emotion Recognition
+1. INTRODUCTION
+Facial Emotion Recognition (FER) has received great attention in recent years in various domains. Translating human
+expressiveness into emotions is a fundamental step in several
+applications, from personalized experiences to psychological analysis [1], highlighting the importance of the research
+conducted. Early FER approaches relied on handcrafted features for facial expression analysis. Although effective in
+controlled settings, such methods often lacked generalization
+and robustness in real world scenarios [2]. With the advent of
+deep learning, Convolutional Neural Networks (CNNs) were
+introduced to improve FER performance by automatically
+learning discriminative representations [3]. However, CNN
+based methods remain limited in capturing long range dependencies due to their inherently local receptive fields [4, 5].
+‡ Equal contribution.
+
+86.0
+
+Mean accuracy (%)
+
+arXiv:2608.08873v1 [cs.CV] 9 Aug 2026
+
+ABSTRACT
+
+85.5
+85.0
+84.5
+84.0
+83.50.0
+
+Baseline
+SAE
+0.2
+
+0.4
+
+0.6
+
+Keep rate
+
+0.8
+
+1.0
+
+Fig. 1. Accuracy vs. keep rate of SAE on Raf-DB dataset.
+To explicitly model the global contextual information of
+facial expressions, Vision Transformers (ViTs) [6], which
+have shown state of the art performance in image recognition,
+were the inspiration of the proposed Transformer-based FER
+models [7–9] by processing facial images as sequences of
+tokens. Among them, POSTER [8] achieves state of the art
+performance by integrating facial landmarks and image features through a two-stream pyramid cross-fusion architecture.
+Despite these advances, the large number of image tokens
+treated indiscriminately to classify emotions, resulting in high
+computational costs, is a major limitation that remains unaddressed. In this work, we address this problem while maintaining high accuracy at a lower computational cost compared
+to state of the art methods.
+We propose a token pruning method, originally used for
+generic image classification, that retains only the tokens with
+the highest impact on emotion recognition for the FER task
+and evaluates its performance on standard FER datasets. After experimenting with token pruning at different rates and analyzing the remaining tokens. We observe that in most cases
+the retained tokens correspond to specific regions of the face.
+As shown in Figure 1, when retaining only 10% of the image
+tokens, which cover mainly the eyes and the mouth areas in
+
+later layers, our method still achieved state of the art performance. Indeed, the best performance of our proposed method
+is achieved when keeping 60% of the image tokens, and even
+when discarding up to 90% of the tokens, the results in an accuracy drop of only 0.3% compared to the baseline, demonstrating its effectiveness even with aggressive token pruning.
+Therefore, our main finding is that the FER task does not
+necessarily need complete facial information, and that specific regions of the face, such as the eyes, mouth, and parts of
+the cheeks, are sufficient to predict emotional states. Based
+on this observation, we propose Sparse Attention to Emotion
+(SAE), a token pruning approach for the FER task. To the
+best of our knowledge, this is the first work to explore the
+application of token pruning as an efficient solution to FER
+tasks.
+Empirical results on the Raf-DB [10] dataset show that
+we generally outperform state of the art methods on computational complexity reduction, while matching, or outperforming them in terms of accuracy. Specifically, our model
+achieves the best accuracy at a 40% token discard rate and a
+competitive performance even after discarding 90% of tokens.
+Our contributions are presented as follows:
+• We propose a token pruning approach for the FER task
+to reduce the computational cost of ViT models, while
+limiting their performance drop.
+• We simplify the complexity of FER by focusing on
+discriminative facial regions that carry important emotional information.
+• We validate the robustness and efficiency of our approach, demonstrating that it matches or outperforms
+previous state of the art methods on the RAF-DB
+dataset.
+2. RELATED WORKS
+2.1. Vision Transformers
+The Vision Transformer (ViT) [6] represents an image as a
+sequence of patches and uses the attention mechanism to capture the correlations between them. DeiT [11] enhances data
+efficiency by introducing the knowledge distillation token,
+reducing the need for large-scale datasets required by ViT.
+Swin Transformer [12] introduces hierarchical representation
+with a shifted window, limiting the attention computation to
+only local regions, while progressively merging patches. LocalViT [13] reintegrates the convolutional local inductive bias
+into Transformers, improving local feature modeling without
+sacrificing global context.
+Despite their effectiveness, these methods display quadratic
+complexity, as mentioned above, making them costly, which
+led to the development of compression techniques.
+
+2.2. Token reduction
+Multiple works addressed the complexity of Transformers
+through the reduction of the number of tokens processed.
+DynamicVit [14] introduces a module that prunes tokens
+across layers based on their importance. Building on this
+idea, EViT [15] proposes a simple and effective approach that
+removes inattentive tokens based on the cls-token attention
+score, significantly reducing the inference cost and without
+introducing additional parameters. Evo-ViT [16] introduces
+a slow-fast token evaluation strategy, in which informative
+tokens are selected and processed through all layers, while
+placeholder tokens evolve through fewer layers.
+Although these methods effectively reduce computational
+cost, their effectiveness is limited mainly to generic benchmarks such as ImageNet, and their applicability to domainspecific tasks such as facial emotion recognition remains
+largely unexplored.
+2.3. Facial Emotion Recognition
+Facial Emotion Recognition (FER) is a task that identifies
+and classifies human emotions from facial expressions. Many
+approaches have been proposed to address this task, such
+as TransFER [7] which introduces a framework that learns
+relation-aware facial representations by modeling global interactions between local facial patches, while encouraging
+the diversity of learned facial features through attention dropping strategies (MAD, MSAD). VTFF [17] presents Visual
+Transformers with Feature Fusion, the method introduces
+an additional module ASF to combine multi-branch CNN
+features, and then applies a Transformer to capture global
+relationships among the resulting tokens, enhancing the robustness to occlusion and pose variation. EAC [18] proposes
+a method for noisy-label FER by randomly erasing input images and using the flip attention consistency, preventing the
+model from overfitting to wrong labels. APViT [19] introduces two attentive pooling modules, APP is used to select
+the most attentive patches in CNN features, while APT is
+used to discard inattentive tokens in ViT, resulting in lower
+cost and better performance. DAN [20] designs facial emotion recognition frameworks consisting of three sub-networks
+that extract the features, attend to multiple facial regions,
+fuse features from different heads, and produce the prediction score. POSTER [8] introduces a FER framework that
+combines image features and facial landmark features, using
+two streams, and by doing a cross fusion attention, it uses a
+pyramid structure enabling multi-scale handling, addressing
+the intra-class discrepancy, inter-class similarity, and scale
+sensitivity. POSTER++ [2] proposes an improved version
+of POSTER, with the aim of reducing the expensive computational cost. ARBEx [21] introduces a ViT-based attentive
+feature extraction framework with a reliability balancing
+mechanism based on anchors, cross-attention, and confidence
+estimation. LFNSB [22] designs a facial recognition network
+
+that effectively balances model, complexity, and recognition accuracy, and this by using two key modules, LFN and
+SN. S2D [23] presents a framework that transfers knowledge
+from static facial expression recognition to dynamic facial
+expression. BTN [9] designs a framework in FER that learns
+reliable features by using class batch attention and multi-level
+attention to reduce noise and overfitting.
+Compared to previous work that processes the entire image, our hypothesis is that not all facial regions are important
+for the FER task. Only a subset of facial regions is needed
+for the model to correctly classify an emotion, which is done
+by applying token pruning to remove unnecessary tokens and
+retain only the tokens of the most discriminative regions such
+as the eyes, the mouth, and parts of the cheeks.
+
+ai = (ACLS )i ,
+
+i = 1, . . . , N.
+
+(6)
+
+For multi-head attention with H heads, the importance scores
+are averaged across all heads:
+H
+
+ā =
+
+1 X (h)
+a .
+H
+
+(7)
+
+h=1
+
+Let K denote the indices of the top-k tokens that are kept
+based on their importance scores, and N denote the indices
+of the remaining tokens. Inattentive tokens are fused into a
+single token, and the final token sequence is obtained by concatenating the kept tokens with the fused token. Formally:
+K = TopK(a1 , . . . , aN ; k),
+
+N = {1, . . . , N } \ K
+
+(8)
+
+3. METHODOLOGY
+Here we describe our proposed approach for facial emotion
+recognition, called Sparse Attention to Emotions. It is built
+upon token pruning.
+3.1. Self-Attention Mechanism
+
+K = XWK ,
+
+V = XWV
+
+(1)
+
+ QK ⊤ 
+√
+V.
+d
+
+(2)
+
+The attention output is computed as:
+Attention(Q, K, V ) = softmax
+
+X
+
+ai xi
+
+(9)
+
+i∈N
+
+Xfinal = [{xi }i∈K , xfused ]
+
+(10)
+
+3.3. Sparse Attention to Emotion
+
+Given an input sequence X ∈ RN ×d , where N is the number
+of tokens and d is the embedding dimension, the self-attention
+mechanism projects the input into queries, keys, values using
+learnable matrices WQ , WK , WV ∈ Rd×d
+Q = XWQ ,
+
+xfused =
+
+The output of the self attention is then passed to a feed
+forward network (MLP):
+
+The overview of SAE is shown in Figure 2. Given an input facial image, we extract visual features using a convolutional backbone, while facial landmark features are obtained through a parallel landmark encoder. Let X ∈ RN ×d ,
+L ∈ RN ×d denote the image-based and landmark-based
+token embeddings, respectively, where N is the number of
+tokens and d is the embedding dimension. The image and
+landmark sequences are processed by a cross-fusion multihead self-attention (MSA) layer. Linear projections are first
+applied to obtain query, key, and value matrices as follows:
+(1)
+
+(3)
+
+QX = XWQ ,
+
+KX = XWK ,
+
+The total complexity cost of the Transformer layer is given
+by [24]:
+
+QL = LWQ ,
+
+(2)
+
+KL = LWK ,
+
+MLP(X) = FC2 (RELU(FC1 (X))),
+
+ϕBLK (N, d) = ϕMSA (N, d) + ϕMLP (N, d) = 12N d2 + 2N 2 d,
+(4)
+highlighting the quadratic complexity with respect to the sequence length N .
+3.2. Token Pruning
+Given an input sequence X ∈ RN ×d , where N is the number
+of tokens and d is the embedding dimension. We compute the
+self-attention matrix following Eq 2.
+We focus on the first row corresponding to the [CLS]
+token, each element ai in this row representing the importance
+of the i-th token:
+ Q K⊤ 
+CLS
+√
+V
+(5)
+ACLS = softmax
+d
+
+(1)
+
+VX = XWV , (11)
+
+(1)
+
+(2)
+
+VL = LWV .
+
+(2)
+
+(12)
+
+Cross fusion attention is then computed following Eq 2:
+ATTNX = Attention(QL , KX , VX ),
+
+(13)
+
+ATTNL = Attention(QX , KL , VL ).
+
+(14)
+
+This cross-attention mechanism enables mutual information exchange between image and landmark representations.
+Residual connections are applied to obtain the fused representations:
+X′ = ATTNX + X,
+(15)
+L′ = ATTNL + L.
+
+(16)
+
+The fused sequences are then passed through the token pruning module:
+Xpr = T P(X′ ),
+
+Lpr = T P(L′ ).
+
+(17)
+
+CLS
+Landmark
+
+Token Pruning
+Top K Tokens
+
+Norm
+
+Multi-Head
+Self-Attention
+
+Norm
+
+Retained
+Tokens
+
+Fused
+Tokens
+
+Feed-Forward
+Network
+
+Cross-Fusion MSA
+Facial
+Landmark
+
+Landmark
+Detector
+MobileFaceNet
+
+CLS
+Landmark
+
+Concatenate
+
+Token Pruning
+
+CLS
+Image
+
+Top K Tokens
+
+Fused
+Tokens
+
+Norm
+
+Retained
+Tokens
+
+Feed-Forward
+Network
+
+Multi-Head
+Self-Attention
+
+Norm
+
+Image
+Tokens
+
+CLS
+Image
+
+Output
+Sequence
+
+Fig. 2. Overview of SAE architecture.
+where T P represents the token pruning module. Finally, each
+pruned sequence is processed by a feed-forward network:
+Xout = MLP(Norm(Xpr )) + Xpr ,
+
+(18)
+
+Lout = MLP(Norm(Lpr )) + Lpr .
+
+(19)
+
+4. EXPERIMENTS
+4.1. Datasets and experimental settings
+RAF-DB: The Real-world Affective Faces Database (RAFDB) [10] is a large-scale facial expression dataset containing real-world facial images. It includes seven emotion categories: surprise, fear, disgust, anger, neutral, sad, and happiness.
+Training settings: The model is trained using the Sharpness
+Aware Minimization (SAM) optimizer wrapped around the
+Adam optimizer. The initial learning rate is set to 4 × 10−5 ,
+with a batch size of 100, the learning rate is exponentially decayed using ExponentialLR with γ = 0.98 through the training process for 300 epochs. MobileFaceNet is used as the
+landmark feature extractor with frozen weights.
+4.2. Experiment results
+Table 1 presents the class-wise and mean accuracy of SAE on
+RAF-DB. For a detailed analysis of SAE performance compared to the state of the art, with a keep rate of 0.9, SAE
+
+achieves a mean accuracy of 84.96%, remaining close to state
+of the art methods that use full representations. When reducing the keep rate to 0.6, the mean accuracy increases to
+85.60%, confirming that pruning can preserve discriminative
+tokens across most emotion classes. For keep rate of 0.3, despite discarding 70% of tokens, SAE maintains a competitive
+mean accuracy of 85.19%, with stable performance on dominant classes such as Happy, Neutral, and Sad. Even for a
+very low keep rate 0.1, where 90% of tokens are removed,
+the mean accuracy remains at 85.36%, a small degradation
+compared to the other approaches. Across all keep rates, our
+model shows strong robustness to token reduction, achieving
+significant low cost while preserving balanced per-class performance.
+Table 2 reports the overall accuracy of SAE compared to
+state of the art methods on RAF-DB, while focusing on the
+trade-off between performance and computational complexity. For a high keep rate 0.9, SAE reaches an accuracy of
+90.51%, which is already comparable to other approaches.
+When the keep rate is reduced to 0.6, the accuracy increases
+to 91.13%, remaining competitive with recent transformerbased methods. Even with more aggressive pruning for a
+keep rate of 0.3 and 0.1, SAE shows strong robustness, the
+accuracy remains stable. These results clearly indicate that
+SAE can reduce computational complexity by up to 90%
+while causing only a negligible performance loss often below
+1% demonstrating an efficient accuracy complexity trade-off
+compared to existing approaches.
+
+Table 1. Comparison of SAE with state of the art methods on RAF-DB dataset in terms of class-wise accuracy, and mean
+Accuracy and keep rate (tokens).
+Method
+Accuracy of Emotions (%)
+Mean Acc (%) keep rate
+Neutral Happy
+Sad
+Surprise Fear Disgust Anger
+VTFF [17]
+87.50
+94.09 87.24
+85.41
+64.86
+68.12
+85.80
+81.20
+TransFER [7]
+90.15
+95.95 88.70
+89.06
+68.92
+79.37
+88.89
+85.86
+POSTER++ [2]
+92.06
+97.22 92.89
+90.58
+68.92
+71.88
+88.27
+85.97
+POSTER [8]
+92.35
+96.96 91.21
+90.27
+67.57
+75.00
+88.89
+86.04
+APViT [19]
+92.06
+97.30 88.70
+93.31
+72.97
+73.75
+86.42
+86.36
+BTN [9]
+92.21
+97.05 92.26
+91.49
+72.97
+76.25
+88.89
+87.30
+SAE
+90.00
+95.78 88.91
+89.06
+68.92
+75.00
+87.04
+84.96
+0.9
+SAE
+92.21
+96.12 90.79
+89.97
+63.51
+72.50
+85.19
+85.80
+0.6
+SAE
+90.44
+96.03 92.47
+87.54
+70.27
+75.00
+84.57
+85.19
+0.3
+SAE
+91.18
+96.29 89.96
+89.67
+70.27
+71.88
+88.27
+85.36
+0.1
+
+Table 2. Comparison of SAE with state of the art approaches
+on RAF-DB in terms of overall accuracy (%) and keep rate
+(tokens).
+Methods
+Keep rate overall accuracy
+TransFER [7]
+90.91
+EfficientFace [25]
+88.36
+EAC [18]
+90.35
+APViT [19]
+91.98
+DAN [20]
+89.70
+POSTER [8]
+92.05
+POSTER++ [2]
+92.21
+ARBEx [21]
+92.47
+LFNSB [22]
+91.07
+S2D [23]
+92.21
+S2D* [23]
+92.57
+BTN [9]
+92.54
+SAE
+0.9
+90.51
+SAE
+0.6
+91.17
+SAE
+0.3
+91.00
+SAE
+0.1
+91.13
+
+5. CONCLUSION
+In this paper, we proposed Sparse Attention to Emotion, an
+efficient approach that explores token pruning in facial emotion recognition to reduce computational complexity without
+compromising performance. SAE integrates a pyramid crossfusion architecture that exploits complementary information
+from landmark and image streams, and uses multi-scale feature representation to capture facial emotions at different
+resolutions. Experiments on common benchmark datasets
+showed that SAE matches or outperforms state of the art results while retaining only 10% of the image tokens, making
+it well suited for edge deployment and resource constrained
+applications.
+
+6. REFERENCES
+[1] Delian Ruan, Yan Yan, Shenqi Lai, Zhenhua Chai,
+Chunhua Shen, and Hanzi Wang, “Feature decomposition and reconstruction learning for effective facial expression recognition,” in Proceedings of the IEEE/CVF
+Conference on Computer Vision and Pattern Recognition (CVPR), June 2021, pp. 7660–7669.
+[2] Jiawei Mao, Rui Xu, Xuesong Yin, Yuanqi Chang, Binling Nie, and Aibin Huang, “Poster++: A simpler and
+stronger facial expression recognition network,” 2023.
+[3] Andrey V Savchenko, “Facial expression and attributes
+recognition based on multi-task learning of lightweight
+neural networks,” in 2021 IEEE 19th international symposium on intelligent systems and informatics (SISY).
+IEEE, 2021, pp. 119–124.
+[4] Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob
+Uszkoreit, Llion Jones, Aidan N Gomez, Lukasz Kaiser,
+and Illia Polosukhin, “Attention is all you need,” Advances in neural information processing systems, vol.
+30, 2017.
+[5] Xiaolong Wang, Ross Girshick, Abhinav Gupta, and
+Kaiming He, “Non-local neural networks,” in Proceedings of the IEEE conference on computer vision and pattern recognition, 2018, pp. 7794–7803.
+[6] Alexey Dosovitskiy, Lucas Beyer, Alexander
+Kolesnikov, Dirk Weissenborn, Xiaohua Zhai, Thomas
+Unterthiner, Mostafa Dehghani, Matthias Minderer,
+Georg Heigold, Sylvain Gelly, Jakob Uszkoreit, and
+Neil Houlsby, “An image is worth 16x16 words: Transformers for image recognition at scale,” in International
+Conference on Learning Representations, 2021.
+[7] Fanglei Xue, Qiangchang Wang, and Guodong Guo,
+“Transfer: Learning relation-aware facial expression
+
+representations with transformers,” in Proceedings of
+the IEEE/CVF International Conference on Computer
+Vision (ICCV), October 2021, pp. 3601–3610.
+[8] Ce Zheng, Matias Mendieta, and Chen Chen, “Poster: A
+pyramid cross-fusion transformer network for facial expression recognition,” in Proceedings of the IEEE/CVF
+International Conference on Computer Vision (ICCV)
+Workshops, October 2023, pp. 3146–3155.
+[9] Myungbeom Her, Jisu Jeong, Hojoon Song, and JiHyeong Han, “Batch transformer: Look for attention
+in batch,” IEEE Access, vol. 13, pp. 190093–190107,
+2025.
+[10] Shan Li, Weihong Deng, and JunPing Du, “Reliable
+crowdsourcing and deep locality-preserving learning for
+expression recognition in the wild,” in Proceedings of
+the IEEE conference on computer vision and pattern
+recognition, 2017, pp. 2852–2861.
+[11] Hugo Touvron, Matthieu Cord, Matthijs Douze, Francisco Massa, Alexandre Sablayrolles, and Hervé Jégou,
+“Training data-efficient image transformers & distillation through attention,” in International conference on
+machine learning. PMLR, 2021, pp. 10347–10357.
+[12] Ze Liu, Yutong Lin, Yue Cao, Han Hu, Yixuan
+Wei, Zheng Zhang, Stephen Lin, and Baining Guo,
+“Swin transformer: Hierarchical vision transformer using shifted windows,” in Proceedings of the IEEE/CVF
+international conference on computer vision, 2021, pp.
+10012–10022.
+[13] Yawei Li, Kai Zhang, Jiezhang Cao, Radu Timofte,
+Michele Magno, Luca Benini, and Luc Van Goo, “Localvit: Analyzing locality in vision transformers,” in
+2023 IEEE/RSJ International Conference on Intelligent
+Robots and Systems (IROS). IEEE, 2023, pp. 9598–
+9605.
+[14] Yongming Rao, Wenliang Zhao, Benlin Liu, Jiwen Lu,
+Jie Zhou, and Cho-Jui Hsieh, “Dynamicvit: Efficient
+vision transformers with dynamic token sparsification,”
+Advances in neural information processing systems, vol.
+34, pp. 13937–13949, 2021.
+[15] Youwei Liang, Chongjian GE, Zhan Tong, Yibing Song,
+Jue Wang, and Pengtao Xie, “EVit: Expediting vision transformers via token reorganizations,” in International Conference on Learning Representations, 2022.
+[16] Yifan Xu, Zhijie Zhang, Mengdan Zhang, Kekai Sheng,
+Ke Li, Weiming Dong, Liqing Zhang, Changsheng Xu,
+and Xing Sun, “Evo-vit: Slow-fast token evolution
+for dynamic vision transformer,” in Proceedings of the
+AAAI conference on artificial intelligence, 2022, vol. 36,
+pp. 2964–2972.
+
+[17] Fuyan Ma, Bin Sun, and Shutao Li, “Facial expression
+recognition with visual transformers and attentional selective fusion,” IEEE Transactions on Affective Computing, vol. 14, no. 2, pp. 1236–1248, 2021.
+[18] Yuhang Zhang, Chengrui Wang, Xu Ling, and Weihong
+Deng, “Learn from all: Erasing attention consistency
+for noisy label facial expression recognition,” in European Conference on Computer Vision. Springer, 2022,
+pp. 418–434.
+[19] Fanglei Xue, Qiangchang Wang, Zichang Tan, Zhongsong Ma, and Guodong Guo, “Vision transformer with
+attentive pooling for robust facial expression recognition,” IEEE Transactions on Affective Computing, vol.
+14, no. 4, pp. 3244–3256, 2022.
+[20] Zhengyao Wen, Wenzhong Lin, Tao Wang, and Ge Xu,
+“Distract your attention: Multi-head cross attention network for facial expression recognition,” Biomimetics,
+vol. 8, no. 2, pp. 199, 2023.
+[21] Azmine Toushik Wasi, Karlo Šerbetar, Raima Islam,
+Taki Hasan Rafi, and Dong-Kyu Chae, “Arbex: Attentive feature extraction with reliability balancing for
+robust facial expression learning,”
+arXiv preprint
+arXiv:2305.01486, 2023.
+[22] Xuefeng Chen and Liangyu Huang, “A lightweight
+model enhancing facial expression recognition with spatial bias and cosine-harmony loss,” Computation, vol.
+12, no. 10, pp. 201, 2024.
+[23] Yin Chen, Jia Li, Shiguang Shan, Meng Wang, and
+Richang Hong, “From static to dynamic: Adapting landmark-aware image models for facial expression
+recognition in videos,” IEEE Transactions on Affective
+Computing, 2024.
+[24] Zizheng Pan, Bohan Zhuang, Jing Liu, Haoyu He, and
+Jianfei Cai, “Scalable vision transformers with hierarchical pooling,” in Proceedings of the IEEE/cvf international conference on computer vision, 2021, pp. 377–
+386.
+[25] Zengqun Zhao, Qingshan Liu, and Feng Zhou, “Robust
+lightweight facial expression recognition network with
+label distribution training,” in Proceedings of the AAAI
+conference on artificial intelligence, 2021, vol. 35, pp.
+3510–3519.
+
+

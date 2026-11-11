@@ -1,0 +1,1350 @@
+SRE-FER: Regional residual evidence learning for mitigating
+local evidence dilution in fine-grained facial expression
+recognition
+Jiaye Song*,† , Ruochen Zhang* , Yuliang Wang* , and Jiaqi Wu
+Tiangong University, No. 399 Binshuixi Road, Xiqing District, Tianjin 300387, China
+
+arXiv:2608.08702v1 [cs.CV] 9 Aug 2026
+
+ABSTRACT
+Fine-grained facial expression recognition (FER) hinges on capturing subtle muscular cues that distinguish
+adjacent emotions. Yet capturing these cues presents a dilemma. Detector-based methods depend on fragile
+landmark pipelines, whereas we find that directly transferring foundation models such as DINOv3 under
+conventional global readouts can cause local evidence dilution: early global aggregation washes out sparse
+muscular signals and leaves persistent confusion between categories such as fear /surprise and sad /neutral. To
+recover this evidence, we propose SRE-FER, a readout-level regional residual evidence learning framework.
+Its core module, RERA, adds zero-initialized residual logits that refine class boundaries while preserving the
+backbone’s global prediction. Training-time action unit (AU) guidance steers regional features toward expressionrelevant areas using Facial Action Coding System (FACS)-based anatomical priors, without requiring an external
+facial pipeline at inference. An optional Full setting further routes sample-specific non-redundant tokens. On
+three benchmarks, SRE-FER attains 92.76% on RAF-DB, 91.32% on FERPlus, and 67.78% on AffectNet-7,
+demonstrating highly competitive performance compared to existing FER methods.
+Keywords: Facial expression recognition, regional evidence, residual adapter, self-supervised foundation model,
+action unit prior Conference Topic: Computer Vision and Robot Vision
+
+1. INTRODUCTION
+It has been a long-standing goal in facial expression recognition (FER) to learn representations that are both
+robust to variations in identity, pose, and illumination and sensitive to subtle muscular changes. The balance
+is difficult because adjacent expressions often differ only in small facial areas, such as the eyebrow and eyelid
+cues shared by fear /surprise or the mouth-corner cues separating sad /neutral. Existing FER methods mainly
+follow two routes. Holistic methods strengthen image-level classifiers through robust objectives and transformer
+modeling,1–4 but may miss sparse muscular cues. Region-focused methods expose these cues through attention
+masks, landmarks, or facial-structure branches,5, 6 at the cost of additional task-specific machinery. This creates
+the two-sided tension illustrated in Fig. 1: one route is simple but often insufficiently detailed, whereas the other
+is targeted but less self-contained.
+This tension motivates us to revisit self-supervised vision foundation models. Representative FER systems still
+begin from supervised CNN or face-recognition encoders, such as ResNet-18 in SCN and IR-50 in POSTER.1, 5
+DINOv3 instead learns without expression labels and provides dense patch tokens with strong spatial correspondence,7 making it a natural candidate for detector-free cue modeling. Rather than treating it as a plug-and-play
+backbone, we study how these dense tokens behave under fine-grained FER readouts. However, conventional
+class-token (CLS) and mean-pooled readouts aggregate patches early, allowing sparse muscular cues to be absorbed
+into a holistic facial representation. We call this readout-level failure local evidence dilution. The key question
+is how to recover these cues from DINOv3 patch tokens while retaining the stability of the global classifier.
+*
+
+These authors contributed equally. † Corresponding author: Jiaye Song; E-mail: a17778032691@163.com
+Ruochen Zhang; E-mail: qianyuanshi26@163.com; Yuliang Wang; E-mail: wangyuliang@tiangong.edu.cn
+Jiaqi Wu; E-mail: 2311640202@tiangong.edu.cn
+
+Motivation: Local Evidence Dilution in Fine-grained FER
+(a) Detector-dependent Local FER
+
+（b) Direct DiNOv3 transfer
+DINOv3
+dense patch
+tokens
+
+Input face
+External landmark
+detector
+
+extra
+detector
+
+Local branches /
+region attention
+
+failure
+risk
+
+Prediction
+
+complex
+inference
+
+limited FER labels
+
+Effective but costly and
+detector-dependent
+DINOv3 / global aggregation
+
+(c) Fine-grained confusion
+Fine-grained cues are local and sparse
+Sad vs. Neutral
+
+Sad example
+
+CLS / patch mean
+global aggregation
+
+neutral-like global
+evidence
+
+Strong global representation,
+but sparse local cues are diluted
+diluted local cues / confusion
+
+Neutral example
+
+196 patch tokens
+
+few discriminative
+expression patches
+
+many identity / non-expression
+patches
+
+Global aggregation weakens local
+decision evidence
+
+local expression-related regions
+
+landmark dependency
+
+Figure 1. Motivation of local evidence dilution in fine-grained FER.
+
+We therefore present SRE-FER, a readout-level framework that treats regional cues as residual evidence for
+the global prediction. Its Regional Evidence Residual Adapter (RERA) partitions DINOv3 patch tokens into
+spatial regions, pools region-specific evidence, and produces zero-initialized residual logits. Training-time action
+unit (AU) guidance introduces Facial Action Coding System (FACS)-based anatomical priors, but is removed at
+inference; SRE-FER therefore requires no test-time landmark detector or external facial-structure pipeline. In the
+Full setting, a non-redundant evidence branch further routes complementary sample-specific cues.
+The paper makes three contributions:
+1. Analytically, we identify local evidence dilution in conventional readouts of dense DINOv3 tokens, where
+early aggregation weakens sparse expression cues.
+2. Methodologically, RERA adds zero-initialized regional residual logits, while training-time AU guidance
+provides anatomical regularization without an inference-time facial pipeline.
+3. Experimentally, SRE-FER demonstrates highly competitive performance on three benchmarks; progressive
+ablations and class-level diagnostics trace the gains.
+
+2. RELATED WORK
+2.1 Holistic and Region-Based Modeling for Fine-Grained FER
+Holistic FER methods improve label robustness through uncertainty-aware objectives and attentive losses,1, 2
+while relation-aware transformers strengthen image-level representations.3, 4 Region-focused methods retain more
+spatial structure: RAN emphasizes pose-robust local areas,8 LAN learns local attention masks,6 and POSTER
+combines image and landmark streams.5 Ambiguity modeling and multi-scale fusion offer complementary
+improvements.9, 10 Together, these studies establish the value of local evidence, but they either compress it into
+an image-level representation or introduce a task-specific local branch. SRE-FER instead reads regional evidence
+from patch tokens already produced by the backbone.
+
+2.2 Foundation Model Adaptation and Local Evidence Dilution
+Foundation-model FER has largely followed a semantic route. DFER-CLIP and EmoCLIP adapt visionlanguage representations to expression recognition,11, 12 while MPA-FER aligns global and local visual features
+with multimodal prompts.13 LoRA and visual prompt tuning provide general mechanisms for transferring large
+
+pre-trained models with few task-specific parameters.14, 15 A recent norm-referenced encoding study also tested a
+final DINOv3 CLS feature on the synthetic FERG dataset.16 It establishes the compatibility of the backbone
+with FER, but leaves a visual-side question open: how should dense self-supervised tokens be read on in-the-wild
+benchmarks?
+DINOv3 offers a useful setting for this question: its patch tokens preserve spatial detail, whereas the usual
+CLS or mean-pooled readout remains global. SRE-FER acts at this interface. It leaves the global path intact and
+adds regional correction at the logits, allowing dense visual evidence to influence the decision without introducing
+a language-alignment or detector pipeline.
+
+2.3 AU Priors and Structured Constraints
+The Facial Action Coding System (FACS)17 defines anatomically grounded action units used to characterize
+expression-related facial movements. Tools such as OpenFace18 enable automatic AU detection; JAA-Net19 jointly
+models AU detection and face alignment. Prior AU- or landmark-guided pipelines often rely on external facial
+structure estimators during inference, adding computational cost and risking failure under occlusion.5, 20 SRE-FER
+bridges global foundation-model readouts and detector-dependent regional modeling by using AU-derived guidance
+only during training and reading regional evidence directly from patch tokens at inference.
+
+3. METHOD
+3.1 Overall Framework
+SRE-FER is built around a simple principle: retain the global prediction and introduce local evidence as a
+residual correction (Fig. 2). A partially frozen DINOv3 encoder maps image x to a CLS token hcls and N spatial
+patch tokens P:
+[hcls , P] = Fθ (x),
+
+P = [p1 , . . . , pN ] ∈ RN ×D
+
+(1)
+
+A patch-aware global path combines hcls with the patch mean to form base logits og . In parallel, RERA pools
+K spatial regions and produces residual logits or :
+o = og + γor ,
+
+exp(oc )
+p(y = c | x) = PC
+j=1 exp(oj )
+
+(2)
+
+Here, γ is a learnable scalar initialized to zero. Consequently, the initial joint logits and predictions are exactly
+those of the global classifier. Unlike an unconstrained concatenation or late-fusion head, which reparameterizes
+the decision from the outset, RERA leaves og explicit and learns an additive correction to its class margins.
+Deploy. contains only the encoder, global readout, and RERA; Full additionally routes tokens that are poorly
+represented by the dominant patch basis.
+
+3.2 Dense Token Encoding and Base Readout
+With a 224 × 224 input, DINOv3 ViT-L/16 yields a 14 × 14 patch grid (N = 196, D = 1024; Fig. 2). Register
+tokens are discarded; the first 20 Transformer blocks are frozen, while the last 4 blocks and final LayerNorm are
+fine-tuned. We retain the spatial tokens as the local feature basis for subtle muscular changes.
+The patch-aware readout jointly exploits the CLS token and patch statistics to produce stable base logits og ,
+where LN denotes layer normalization:
+N
+
+p̄ =
+
+1 X
+pi ,
+N i=1
+
+zg = LN (Wc hcls + Wp p̄) ,
+
+og = Wg zg
+
+(3)
+
+This readout preserves CLS-level semantics while exposing patch statistics to the subsequent regional correction.
+
+II Structured Residual Evidence Learning
+
+I. Dense Facial Token Encoding
+DINOv3
+ViT-L/16
+Dense Token
+Encoder
+Frozen
+early blocks
+
+Input face
+� × ��� × ���
+
+III. Residual Prediction
+
+C1.Global Semantic Path
+
+P
+�� × ��
+�� × ��
+
+Patch-aware
+Global
+Readout
+
+mean(.)
+
+Softmax
+strong global baseline
+
+C2. Regional Residual Path (RERA)
+P
+�� × ��
+
+Trainable
+last
+
+Region
+attention
+pooling
+Fixed 2 × 2
+spatial partition
+
+Training-only AU Evidence Supervision
+selects
+expression-specific
+AU template
+
+pre-computed
+training landmark /
+AU prior
+
+Region
+
+self-attention
+
++ MLP
+
+SE
+channel
+gate
+
+γ
+
+Linear
+cls
+
+7-way expression
+distribution
+∈ [0, 1]^7
+
+deployable
+
+Optional Non-redundant Evidence Routing
+P
+�� × ��
+
+FPS basis
+selection
+
+ridge
+reconstruction
+
+residual score Si
+
+non-redundant
+evidence map
+
+Si
+
+Patch token
+analysis
+
+not used in deployed inference
+
+backprop only
+trainable
+
+frozen
+
+Figure 2. Core Deploy. architecture of SRE-FER. The DINOv3 global path remains intact, while RERA reads regional
+patch evidence and supplies a zero-initialized residual correction. Training-only AU guidance and optional Full routing are
+detailed in Secs. 3.3 and 3.5.
+
+3.3 AU Prior-Guided Evidence Constraint
+We introduce a training-only AU-guided constraint that encourages anatomically plausible attention distributions.
+3.3.1 Sample-Level Prior Mask
+MediaPipe20 extracts 478 normalized landmarks during offline training preprocessing. We use the fixed
+FACS-derived mapping in Table 1 to define AU-relevant landmarks for each expression. A point (u, v) is assigned
+to patch (⌊14u⌋, ⌊14v⌋) after clipping both indices to [0, 13]. Landmark and AU overlaps are merged by binary
+union; sparse class masks are expanded by at most one Chebyshev-neighborhood ring. Image and mask are
+horizontally flipped together. The result is a sample-specific mask M (x, y) ∈ {0, 1}N , with relevant and irrelevant
+index sets Sy and S̄y .
+Table 1. AU priors used to construct training-time masks.
+Expr.
+
+AUs
+
+Regions
+
+Expr. AUs
+
+Regions
+
+Surprise 1/2/5/26
+brow, eyelid, jaw/mouth
+Disgust 9/10
+nose, upper lip
+Fear
+1/2/4/5/20/26 brow, eyelid, mouth, jaw Happy 6/12
+cheek, mouth corners
+Sad
+1/4/15
+inner brow, mouth corners Anger 4/5/7/23 brow, eyelid, lip
+Neutral –
+positive mask disabled
+
+3.3.2 Constraint Loss
+Let A(x) ∈ RN denote the CLS-to-patch attention from the last Transformer layer, obtained by averaging
+attention weights across all heads, excluding register tokens, and renormalizing to sum to 1. We define positive
+and negative patch-level constraints:
+Lconcept = −
+
+1 X
+log(Ai (x) + ϵ),
+|Sy |
+i∈Sy
+
+Lnon = −
+
+1 X
+log(1 − Ai (x) + ϵ)
+|S̄y |
+
+(4)
+
+i∈S̄y
+
+The total AU loss is LAU = λpos Lconcept + λneg Lnon . For neutral, Lconcept is disabled and Lnon penalizes
+attention on the union of expression-related regions. A 1,400-image RAF-DB training probe (200 per class)
+
+detected 1,293 faces (92.4%); rates ranged from 82.5% for anger to 96.5% for surprise and happy. Failed detections
+produce an all-zero mask and zero weight for both AU terms, so ordinary classification supervision remains active.
+AU guidance is removed entirely at inference.
+
+3.4 RERA
+RERA (green modules, Fig. 2) extracts incremental regional evidence from patch tokens and corrects decision
+boundaries with residual logits, without replacing the base classifier.
+3.4.1 Regional Partitioning and Evidence Pooling
+The 14 × 14 grid is divided into K = 4 non-overlapping 7 × 7 quadrants {Rk }K
+k=1 . This is a coarse coordinate
+frame for the aligned-face inputs used here, not a claim of optimal semantic segmentation. It gives every region
+49 candidate tokens without a per-image detector; a learned query qk ∈ RD then selects evidence within each
+quadrant:
+αk,i = P
+
+√
+exp(q⊤
+k pi / D)
+√ ,
+⊤
+j∈Rk exp(qk pj / D)
+
+rk =
+
+X
+
+αk,i pi
+
+(5)
+
+i∈Rk
+
+This yields regional tokens R = [r1 , . . . , rK ] ∈ RK×D . Within-region attention avoids uniform averaging,
+while the following cross-region block allows information to cross the hard quadrant boundaries.
+3.4.2 Cross-Region Coordination
+Lightweight multi-head attention (MHA), followed by average pooling and squeeze-and-excitation (SE) gating,
+models inter-region interactions. The multilayer perceptron (MLP) provides a token-wise update:
+K
+
+e = R + MHA(LN(R)),
+R
+
+b =R
+e + MLP(LN(R)),
+e
+R
+
+zr = SE
+
+1 X
+b
+rk
+K
+
+!
+(6)
+
+k=1
+
+The residual logits are or = Wr zr . For ground-truth class y and confusion class c, the margin after RERA
+correction is:
+my,c = (og,y − og,c ) + γ(or,y − or,c )
+
+(7)
+
+RERA thus learns a correction term rather than an independent replacement classifier: the base margin
+remains explicit, while γ controls the regional contribution. Direct regional supervision (Sec. 3.6) trains or even
+while the joint path initially equals the base classifier.
+
+3.5 Non-Redundant Evidence Routing
+AU priors mark plausible anatomy but not sample-specific increments. Full therefore uses farthest point
+sampling (FPS) and ridge reconstruction as an optional routing test, separate from the core Deploy. claim. Given
+b i , and si = ∥pi − p
+b i ∥2 scores evidence outside
+P ∈ RN ×D , FPS selects B bases, ridge regression reconstructs p
+the dominant basis. The top-k tokens are pooled and fused with RERA (Stage G); Deploy. (Stage F) omits this
+branch.
+
+3.6 Training Objective and Stabilization
+For RAF-DB, Lmain is cross-entropy on the joint output o, with auxiliary regional supervision Lregion
+(cross-entropy on or ) and base supervision Lcls (cross-entropy on og ):
+L = Lmain + λAU LAU + λr Lregion + λcls Lcls
+
+(8)
+
+Although γ is initialized to zero, the residual branch receives direct supervision through Lregion , so or learns
+meaningful corrections before being injected into the joint output.
+For AffectNet-7, Lmain is standard cross-entropy as in the RAF-DB setup. For FERPlus, Lmain is replaced
+with soft-label cross-entropy. To reduce training variance on small FER datasets, we apply SAM (ρ = 0.05),21
+EMA (β = 0.999), and SWA (checkpoint averaging from epoch 8). For stability diagnostics, we optionally use
+horizontal-flip test-time augmentation (TTA): otta = 12 (o(x) + o(flip(x))).
+
+4. EXPERIMENTS
+We evaluate SRE-FER against representative FER methods, then use progressive ablations and fine-grained
+analyses to examine where the gains appear and how the Deploy. and Full paths differ.
+
+4.1 Datasets and Evaluation Metrics
+RAF-DB contains seven expression categories with 12,271 training and 3,068 test images. We follow the
+official split, reserve 10% of training samples for validation, and report multi-seed stability separately in Sec. 4.6.
+For FERPlus, Table 2 records the standard 8-class protocol (neutral, happy, surprise, sad, anger, disgust, fear,
+contempt). Following,4, 5 images with unknown or NF majority votes are excluded, and the remaining votes are
+normalized as soft labels. AffectNet-7 follows its official seven-class train/validation split. All inputs are resized to
+224 × 224. We report Accuracy and additionally use Macro-F1 to examine class behavior on imbalanced RAF-DB.
+Table 2. Experimental dataset configurations.
+
+Dataset
+
+Classes
+
+Train
+
+Test/Val
+
+Input
+
+RAF-DB
+FERPlus
+AffectNet-7
+
+7
+8
+7
+
+12,271
+standard split
+official train
+
+3,068
+standard split
+official val
+
+aligned face, 224 × 224
+soft vote labels, 224 × 224
+224 × 224
+
+4.2 Implementation Details
+Training runs for 150 epochs with batch size 64 under bf16 precision. We use AdamW with weight decay
+0.05; the backbone and task heads use base learning rates of 1 × 10−5 and 1 × 10−4 , respectively, under a cosine
+schedule. Augmentation combines horizontal flipping, RandAugment, and Random Erasing. The AU loss uses
+λpos = 0.5 and λneg = 1.2, the RERA auxiliary weight is λr = 0.075, and the base supervision weight is λcls = 0.2.
+SAM (ρ = 0.05), EMA, and SWA from epoch 8 stabilize training. Main evaluation uses no TTA; stabilized
+deployment inference denotes EMA/SWA-smoothed prediction without a test-time AU module, landmark detector,
+or evidence routing. The Full branch uses FPS B = 32, ridge α = 0.1, top-k = 16, and a learned fusion weight.
+All experiments run on a single RTX 4090 (≈11.7 GB).
+
+4.3 Comparison with Representative Methods
+Table 3 reports the comparison under two inference settings. SRE-FER (Deploy.) uses only DINOv3, the base
+readout, and RERA, achieving 92.47% on RAF-DB, 91.07% on FERPlus, and 67.59% on AffectNet-7. SRE-FER
+(Full) activates non-redundant evidence routing and further improves the results to 92.76%, 91.32%, and 67.78%,
+respectively.
+Across the three benchmarks in Table 3, SRE-FER (Full) demonstrates highly competitive performance;
+routing adds 0.29, 0.25, and 0.19 points over Deploy., respectively. MPA-FER is discussed separately because it
+instead uses frozen CLIP, large-language-model-derived text prompts, and cross-modal alignment.13 A progressive
+DINOv3 ablation is reported in Table 4.
+
+Table 3. Comparison with representative visual-only FER methods. “–” denotes unreported results, and bold marks the
+column maximum among the listed methods. Deploy. and Full denote the deployment and evidence-routing settings.
+Method
+
+Venue
+
+1
+
+SCN
+DMUE9
+TransFER4
+EAC3
+POSTER5
+GLCL-Net22
+MFER23
+AU-ViT24
+WGGLFA25
+
+RAF-DB FERPlus AffectNet-7
+
+CVPR’20
+CVPR’21
+ICCV’21
+ECCV’22
+ICCVW’23
+CAIBDA’24
+TAFFC’25
+TMM’25
+Biomimet.’25
+
+88.14
+89.42
+90.91
+90.35
+92.05
+90.71
+92.08
+91.10
+90.32
+
+89.35
+–
+90.83
+89.64
+91.62
+90.79
+91.09
+90.15
+91.24
+
+–
+63.11
+66.23
+65.32
+67.31
+67.17
+67.06
+65.71
+–
+
+Ours
+Ours
+
+92.47
+92.76
+
+91.07
+91.32
+
+67.59
+67.78
+
+SRE-FER (Deploy.)
+SRE-FER (Full)
+
+4.4 Ablation Study
+Table 4 traces the model from a CLS-only DINOv3 classifier to Full while keeping the backbone, input
+resolution, and data split fixed. The stages add patch statistics, AU guidance, RERA, SAM, EMA/SWA-based
+selection, and non-redundant routing; Sec. 4.5 examines the corresponding class-wise predictions.
+Table 4. Progressive ablation study on RAF-DB.
+Stage
+A
+B
+C
+D
+E
+F
+G
+
+Variant
+CLS only
+CLS + patch mean
++ AU constraint
++ RERA
++ SAM
+SRE-FER (Deploy.)
+SRE-FER (Full)
+
+Key Design
+
+Acc (%)
+
+Gain
+
+semantic token
+dense token statistics
+anatomy-guided evidence
+regional residual logits
+sharpness-aware training
++ EMA/SWA-based selection
++ non-redundant evidence
+
+90.25
+90.61
+90.88
+91.80
+92.11
+92.47
+92.76
+
+–
++0.36
++0.27
++0.92
++0.31
++0.36
++0.29
+
+Stages A–D keep DINOv3, the split, and the training budget fixed: patch statistics and AU guidance add 0.36
+and 0.27 points, followed by +0.92 from the complete RERA unit. The table does not isolate zero initialization or
+compare untested concatenation and late-fusion heads. SAM and EMA/SWA-based selection then reach 92.47%,
+while optional routing adds 0.29 points.
+
+4.5 Fine-Grained Category Decoupling and Confusion Matrix Analysis
+If global readout underuses local cues, the largest changes should occur in boundary-sensitive classes
+rather than only in dominant categories. We therefore analyze grouped F1 (Table 5) and confusion matrix
+evolution (Fig. 4) on RAF-DB, where overall accuracy is influenced by happy and neutral. SRE-FER raises the
+boundary-sensitive set (fear, disgust, sad, surprise) from 79.9% to 83.5%; the minority fear /disgust group shows
+the largest change.
+Figure 3 complements these class-level statistics. Panel (a) compares Stage A (CLS-only DINOv3) with
+Stage F (SRE-FER Deploy.); in the shown examples,
+responses shift from background or expression-irrelevant
+P
+areas toward AU-related regions. AU mass is i Ai Mi , where Ai is normalized patch attention and Mi is the
+AU prior mask. In the principal component analysis (PCA) view of panel (b), happy and neutral form relatively
+coherent clusters, whereas several boundary-sensitive classes still overlap. The first two components explain 59.8%
+of the variance, so the projection is descriptive rather than a quantitative separability measure.
+The PCA geometry mirrors the residual confusion matrices: compact clusters coexist with diffuse, mixed
+bands. Thus SRE-FER recovers part of the local information underused by global aggregation rather than fully
+disentangling visually similar expressions.
+
+CLS DINOv3
+AU mass 0.06
+
+disgust / pred disgust
+
+SRE-FER
+AU mass 0.68
+
+AU prior
+
+PCA Visualization of Final Logit Space
+
+100
+SRE-FER
+AU mass 0.67
+
+CLS DINOv3
+AU mass 0.11
+
+disgust / pred disgust
+
+AU prior
+
+SRE-FER
+AU mass 0.71
+
+50
+
+PC2 (25.1%)
+
+CLS DINOv3
+AU mass 0.06
+
+disgust / pred disgust
+
+AU prior
+
+0
+50
+100
+
+CLS DINOv3
+AU mass 0.05
+
+surprise / pred surprise
+
+SRE-FER
+AU mass 0.64
+
+AU prior
+
+150
+
+surprise
+fear
+disgust
+happy
+
+100
+
+50
+
+0
+PC1 (34.7%)
+
+50
+
+sad
+anger
+neutral
+
+100
+
+(b) Final logit-space PCA
+(a) Attention evidence
+Figure 3. Complementary RAF-DB diagnostics. (a) Input, CLS-only attention, SRE-FER attention, and AU prior. (b)
+PCA projection of final logits, showing both separated clusters and residual class overlap.
+Table 5. Fine-grained F1 results on RAF-DB. Minority and boundary F1 are unweighted means of the class-wise F1 values
+for {fear, disgust} and {fear, disgust, sad, surprise}, respectively.
+Acc (%)
+
+Minority F1 (%)
+
+Boundary F1 (%)
+
+Boundary gain (pt.)
+
+90.25
+90.88
+92.47
+
+70.5
+73.0
+75.2
+
+79.9
+81.1
+83.5
+
+–
++1.2
++3.6
+
+CLS only
+AU-guided
+SRE-FER (Deploy.)
+
+Confusion matrices on RAF-DB
+
+True
+
+A. Best single model (92.18%)
+
+100
+
+B. Stable SRE-FER (92.47%)
+
+C. +Non-redundant evidence (92.76%)
+
+Ang
+
+88.9
+
+4.3
+
+0.0
+
+1.2
+
+1.9
+
+1.9
+
+1.9
+
+Ang
+
+90.1
+
+3.1
+
+0.0
+
+1.2
+
+1.9
+
+1.9
+
+1.9
+
+Ang
+
+90.1
+
+3.1
+
+0.0
+
+1.2
+
+1.9
+
+1.9
+
+1.9
+
+Dis
+
+3.1
+
+71.2
+
+0.6
+
+3.1
+
+10.0
+
+8.8
+
+3.1
+
+Dis
+
+2.5
+
+71.9
+
+0.6
+
+3.8
+
+10.6
+
+6.9
+
+3.8
+
+Dis
+
+2.5
+
+72.5
+
+0.6
+
+4.4
+
+9.4
+
+6.9
+
+3.8
+
+Fea
+
+5.4
+
+1.4
+
+63.5
+
+8.1
+
+5.4
+
+6.8
+
+9.5
+
+Fea
+
+4.1
+
+1.4
+
+67.6
+
+8.1
+
+4.1
+
+6.8
+
+8.1
+
+Fea
+
+4.1
+
+1.4
+
+67.6
+
+8.1
+
+5.4
+
+6.8
+
+6.8
+
+Hap
+
+0.1
+
+0.6
+
+0.1
+
+97.3
+
+1.4
+
+0.3
+
+0.3
+
+Hap
+
+0.1
+
+0.6
+
+0.1
+
+97.4
+
+1.2
+
+0.4
+
+0.3
+
+Hap
+
+0.1
+
+0.5
+
+0.1
+
+97.5
+
+1.2
+
+0.4
+
+0.3
+
+Neu
+
+0.3
+
+0.9
+
+0.0
+
+2.4
+
+92.5
+
+2.8
+
+1.2
+
+Neu
+
+0.4
+
+0.6
+
+0.0
+
+2.5
+
+92.4
+
+3.1
+
+1.0
+
+Neu
+
+0.4
+
+0.7
+
+0.0
+
+2.5
+
+92.4
+
+2.9
+
+1.0
+
+Sad
+
+0.2
+
+0.8
+
+0.4
+
+1.7
+
+4.4
+
+92.5
+
+0.0
+
+Sad
+
+0.2
+
+1.0
+
+0.6
+
+1.5
+
+4.0
+
+92.7
+
+0.0
+
+Sad
+
+0.2
+
+1.0
+
+0.4
+
+1.3
+
+4.2
+
+92.9
+
+0.0
+
+Sur
+
+1.2
+
+1.5
+
+1.8
+
+0.6
+
+3.3
+
+0.6
+
+90.9
+
+Sur
+
+1.2
+
+1.2
+
+1.8
+
+0.6
+
+3.3
+
+0.3
+
+91.5
+
+Sur
+
+1.2
+
+1.2
+
+1.8
+
+0.6
+
+3.3
+
+0.3
+
+91.5
+
+Ang
+
+Dis
+
+Fea
+
+Hap
+
+Neu
+
+Sad
+
+Sur
+
+Ang
+
+Dis
+
+Fea
+
+Hap
+
+Neu
+
+Sad
+
+Sur
+
+Ang
+
+Dis
+
+Fea
+
+Hap
+
+Neu
+
+Sad
+
+Sur
+
+Predicted
+
+Predicted
+
+80
+
+Predicted
+
+60
+
+40
+
+Row-normalized (%)
+
+Variant
+
+20
+
+0
+
+Figure 4. RAF-DB confusion matrices for three checkpoints: (A) best single-checkpoint Deploy. without EMA/SWA
+(92.18%), (B) SRE-FER Deploy. (92.47%), and (C) SRE-FER Full (92.76%). The letters do not denote ablation stages;
+Table 6 uses a separate common pre-routing set.
+
+To separate useful corrections from regressions, Table 6 compares both settings against the same 2823/3068correct pre-routing predictions (a Deploy.-level checkpoint evaluated without EMA/SWA smoothing, ≈92.01%).
+A fixed sample changes from incorrect to correct, whereas a broken sample changes in the opposite direction.
+
+Table 6. Error repair on RAF-DB relative to the same pre-routing predictions.
+Setting
+
+Fixed
+
+Broken
+
+∆
+
+Acc. (%)
+
+20
+32
+
+6
+9
+
++14
++23
+
+92.47
+92.76
+
+SRE-FER (Deploy.)
+SRE-FER (Full)
+
+4.6 Deployment Setting and Recipe Sensitivity
+Table 7 complements, rather than replicates, the validation-selected no-TTA result in Table 3. Its three
+independent runs use fixed SWA/EMA schedules and optional horizontal-flip TTA, yielding 92.00±0.15% accuracy
+and Macro-F1 0.8677 ± 0.0020. Because checkpoint variants and inference protocols differ, this mean measures
+recipe sensitivity and is not a confidence interval for 92.47%.
+Deploy. discards AU masks and landmarks after training and coordinates only four regional tokens; with
+D = 1024 and seven classes, RERA contains 8.54M trainable parameters. Full reuses this readout and additionally
+selects B = 32 FPS bases, solves a 32 × 32 ridge system, and pools the top 16 residual tokens per sample. The
+selector itself is parameter-free, but final server latency and floating-point operations (FLOPs) were not measured.
+Table 7. Additional seed and checkpoint sensitivity results on RAF-DB.
+Seed
+1
+2
+3
+Mean ± std
+
+Raw Acc (%)
+
+Selected Variant
+
+Selected Acc (%)
+
+Macro-F1 (0–1)
+
+91.04
+91.53
+91.36
+
+SWA + hflip TTA
+SWA + hflip TTA
+EMA + hflip TTA
+
+91.92
+92.18
+91.92
+
+0.8699
+0.8671
+0.8661
+
+91.31 ± 0.25
+
+–
+
+92.00 ± 0.15
+
+0.8677 ± 0.0020
+
+5. ANALYSIS AND DISCUSSION
+The progressive DINOv3 ablation assigns the largest structural change to the complete RERA unit (+0.92),
+while grouped F1 and confusion matrices place much of the improvement in boundary-sensitive classes. Attention
+examples indicate where the model responds, and PCA shows the remaining overlap. Unlike POSTER’s landmark
+stream,5 Deploy. reads regional cues directly from DINOv3 tokens, extending the earlier CLS-only test16 to dense
+tokens and in-the-wild benchmarks.
+The evidence supports RERA as a unit rather than every internal choice in isolation. AU guidance provides
+class-conditioned anatomical structure, RERA aggregates and coordinates four coarse regions, and FPS routing
+probes sample-specific residual tokens. The positive fix/break balance shows that the combined evidence corrects
+more RAF-DB predictions than it disrupts, but it does not establish that zero initialization or the four-way
+partition is individually optimal.
+The two inference settings serve different roles. Deploy. removes AU and landmark processing and retains the
+core regional residual readout. Full adds conventional FPS selection and ridge reconstruction, yielding modest
+0.19–0.29 point increments across the three datasets and a larger net repair count on RAF-DB.
+The current evidence has clear boundaries. Fixed quadrants assume roughly aligned faces and may degrade
+under large pose or occlusion; the AU probe also shows class-dependent detection failures. Table 4 does not
+include capacity-matched non-residual heads or LoRA/VPT under the same backbone, and the heatmaps remain
+qualitative. Adaptive regions, matched readout baselines, cross-domain evaluation, and explicit Full-path profiling
+are therefore the most direct next steps.
+
+6. CONCLUSION
+SRE-FER retains dense DINOv3 patch tokens and adds regional residual correction under training-time AU
+guidance. On three benchmarks, SRE-FER attains 92.76% on RAF-DB, 91.32% on FERPlus, and 67.78% on
+AffectNet-7, demonstrating highly competitive performance compared to existing FER methods. Progressive
+ablations support RERA as a complete readout unit, while PCA exposes residual overlap. The fixed regional
+partition, unmatched alternative readouts, and unprofiled Full path remain limitations.
+
+REFERENCES
+[1] Wang, K., Peng, X., Yang, J., Lu, S., and Qiao, Y., “Suppressing uncertainties for large-scale facial expression
+recognition,” in [CVPR ], 6897–6906 (2020).
+[2] Farzaneh, A. and Qi, X., “Facial expression recognition in the wild via deep attentive center loss,” in [WACV],
+2402–2411 (2021).
+[3] Zhang, Y., Wang, C., Ling, X., and Deng, W., “Learn from all: Erasing attention consistency for noisy label
+facial expression recognition,” in [ECCV ], 418–434 (2022).
+[4] Xue, F., Wang, Q., and Guo, G., “TransFER: Learning relation-aware facial expression representations with
+transformers,” in [ICCV ], 3601–3610 (2021).
+[5] Zheng, C., Mendieta, M., and Chen, C., “POSTER: A pyramid cross-fusion transformer network for facial
+expression recognition,” in [ICCV Workshops ], 3146–3155 (2023).
+[6] Cho, S. and Lee, J., “Local attention network for facial expression recognition in the wild,” IEEE Access 10,
+100761–100771 (2022).
+[7] Simeoni, O., Vo, H., Seitzer, M., et al., “DINOv3.” arXiv preprint arXiv:2508.10104 (2025).
+[8] Wang, K., Peng, X., Yang, J., Meng, D., and Qiao, Y., “Region attention networks for pose and occlusion
+robust facial expression recognition,” IEEE Trans. Image Process. 29, 4057–4069 (2020).
+[9] She, J., Hu, Y., Shi, H., Wang, J., Shen, Q., and Mei, T., “Dive into ambiguity: Latent distribution mining
+and pairwise uncertainty estimation for facial expression recognition,” in [CVPR ], 6248–6257 (2021).
+[10] Ma, F., Sun, B., and Li, S., “Facial expression recognition with visual transformers and feature fusion,” IEEE
+Trans. Affect. Comput. 14(2), 1292–1304 (2023).
+[11] Zhao, Z. and Patras, I., “Dynamic facial expression recognition with CLIP,” in [BMVC ], 1–14 (2023).
+[12] Foteinopoulou, X. and Patras, I., “EmoCLIP: A vision-language method for zero-shot video facial expression
+recognition,” in [IEEE FG ], 1–10 (2024).
+[13] Ma, F., He, Y., Sun, B., and Li, S., “Multimodal prompt alignment for facial expression recognition,” in
+[ICCV ], 12581–12591 (2025).
+[14] Hu, E., Shen, Y., Wallis, P., Allen-Zhu, Z., Li, Y., Wang, S., Wang, L., and Chen, W., “LoRA: Low-rank
+adaptation of large language models,” in [ICLR ], (2022).
+[15] Jia, M., Tang, L., Chen, B., Cardie, C., Belongie, S., Hariharan, B., and Lim, S., “Visual prompt tuning,” in
+[ECCV ], 709–727 (2022).
+[16] Stettler, M., Lappe, A., and Giese, M., “Facial expression recognition based on multi-domain norm-referenced
+encoding,” Neural Networks 197, 108384 (2026).
+[17] Ekman, P. and Friesen, W., [Facial Action Coding System: A technique for the measurement of facial
+movement ], Consulting Psychologists Press, Palo Alto (1978).
+[18] Baltrušaitis, T., Zadeh, A., Lim, Y., and Morency, L., “OpenFace 2.0: Facial behavior analysis toolkit,” in
+[IEEE FG ], 59–66 (2018).
+[19] Shao, Z., Liu, Z., Cai, J., and Ma, L., “JAA-Net: Joint facial action unit detection and face alignment via
+adaptive attention,” Int. J. Comput. Vis. 129, 321–340 (2021).
+[20] Lugaresi, C., Tang, J., Nash, H., et al., “MediaPipe: A framework for building perception pipelines.” arXiv
+preprint arXiv:1906.08172 (2019).
+[21] Foret, P., Kleiner, A., Mobahi, H., and Neyshabur, B., “Sharpness-aware minimization for efficiently improving
+generalization,” in [ICLR ], (2021).
+[22] Fan, X. and Xu, L., “Facial expression recognition based on global and local consistency learning network,”
+in [CAIBDA ], 1147–1152 (2024).
+[23] Xu, J., Li, Y., Yang, G., He, L., and Luo, K., “Multiscale facial expression recognition based on dynamic
+global and static local attention,” IEEE Trans. Affect. Comput. 16(2), 683–696 (2025).
+[24] Mao, S., Li, X., Zhang, F., Peng, X., and Yang, Y., “Facial action units as a joint dataset training bridge for
+facial expression recognition,” IEEE Trans. Multimed. 27, 3331–3342 (2025).
+[25] Dong, K., Li, X., Zhang, C., Xiao, Z., and Nie, R., “WGGLFA: Wavelet-guided global-local feature aggregation
+network for facial expression recognition,” Biomimetics 10(8), 495 (2025).
+
+

@@ -6,9 +6,9 @@ import numpy as np
 # 训练日志txt文件路径
 LOG_TXT_PATH = r"D:\WorkPlace\pythonProgram\DeepLearning\basemodels\MobileNetV4\fe2013\mn+ca\log.txt"
 # 训练曲线保存路径
-CURVE_SAVE_PATH = r"D:\WorkPlace\pythonProgram\DeepLearning\basemodels\MobileNetV4\fe2013\image\mn+ca/train_val_curve.png"
+CURVE_SAVE_PATH = r"/MobileNetV4/fe2013/nousing/image\mn+ca/train_val_curve.png"
 # 混淆矩阵图片保存路径
-CM_SAVE_PATH = r"D:\WorkPlace\pythonProgram\DeepLearning\basemodels\MobileNetV4\fe2013\image\mn+ca/confusion_matrix.png"
+CM_SAVE_PATH = r"/MobileNetV4/fe2013/nousing/image\mn+ca/confusion_matrix.png"
 # ===================================================================================
 
 def load_log_from_txt(file_path):

@@ -65,8 +65,17 @@ def build_transform(is_train, args):
 # ===================== 【已修改】适配 train/val 文件夹 =====================
 def read_image_path_label(root_path):
     """直接读取文件夹下的所有类别图片"""
+    if not os.path.isdir(root_path):
+        raise FileNotFoundError(f"Dataset split directory not found: {root_path}")
     class_list = [cla for cla in os.listdir(root_path) if os.path.isdir(os.path.join(root_path, cla))]
     class_list.sort()
+    if not class_list:
+        raise ValueError(
+            f"No class subdirectories found under {root_path}. "
+            "This loader expects split/class/image files (for example "
+            "FER2013Train/angry/*.png). A flat FER+ image directory needs its "
+            "label CSV wired into a dataset loader before training."
+        )
     class_indices = {k: v for v, k in enumerate(class_list)}
 
     images_path = []
@@ -84,10 +93,26 @@ def read_image_path_label(root_path):
 
 
 def build_dataset(args):
-    # 读取你已分好的 train / val 文件夹
-    data_root = args.data_root
-    train_root = os.path.join(data_root, "train")
-    val_root = os.path.join(data_root, "val")
+    # Accept either a conventional train/val root or the FER+ layout where
+    # FER2013Train, FER2013Valid and FER2013Test are sibling directories.
+    data_root = os.path.abspath(args.data_root)
+    if os.path.basename(data_root).lower() == "fer2013test":
+        data_root = os.path.dirname(data_root)
+
+    split_names = {
+        "train": ("train", "FER2013Train", "FER2013train"),
+        "val": ("val", "valid", "validation", "FER2013Valid", "FER2013Validation"),
+    }
+
+    def find_split(candidates):
+        for candidate in candidates:
+            path = os.path.join(data_root, candidate)
+            if os.path.isdir(path):
+                return path
+        return os.path.join(data_root, candidates[0])
+
+    train_root = find_split(split_names["train"])
+    val_root = find_split(split_names["val"])
 
     # 直接读取，不需要自动划分
     train_image_path, train_image_label = read_image_path_label(train_root)

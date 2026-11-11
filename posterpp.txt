@@ -1,0 +1,1234 @@
+POSTER V2: A simpler and stronger facial expression recognition network
+Jiawei Mao† Rui Xu† Xuesong Yin* Yuanqi Chang Binling Nie Aibin Huang∗
+School of Media and Design, Hangzhou Dianzi University, Hangzhou, China
+
+arXiv:2301.12149v2 [cs.CV] 12 Feb 2023
+
+{jiaweima0,211330017,yinxs,yuanqichang,binlingnie,huangaibin}@hdu.edu.cn
+
+Abstract
+Facial expression recognition (FER) plays an important
+role in a variety of real-world applications such as humancomputer interaction. POSTER achieves the state-of-theart (SOTA) performance in FER by effectively combining
+facial landmark and image features through two-stream
+pyramid cross-fusion design. However, the architecture of
+POSTER is undoubtedly complex. It causes expensive computational costs. In order to relieve the computational pressure of POSTER, in this paper, we propose POSTER++. It
+improves POSTER in three directions: cross-fusion, twostream, and multi-scale feature extraction. In cross-fusion,
+we use window-based cross-attention mechanism replacing
+vanilla cross-attention mechanism. We remove the imageto-landmark branch in the two-stream design. For multiscale feature extraction, POSTER++ combines images with
+landmark’s multi-scale features to replace POSTER’s pyramid design. Extensive experiments on several standard
+datasets show that our POSTER++ achieves the SOTA FER
+performance with the minimum computational cost. For example, POSTER++ reached 92.21% on RAF-DB, 67.49%
+on AffectNet (7 cls) and 63.77% on AffectNet (8 cls), respectively, using only 8.4G floating point operations (FLOPs)
+and 43.7M parameters (Param). This demonstrates the effectiveness of our improvements.
+
+1. Introduction
+With the continuous development of technology and
+the continuous improvement of automation, the need
+for human-computer interaction is becoming increasingly
+strong. Facial expression recognition (FER) helps machines to understand human emotions from facial expressions. This makes it as a core task for human-computer interaction. Besides, with its powerful expression understanding ability, FER has great potential applications in psychology, intelligent robotics, intelligent surveillance, virtual reality and synthetic animation. Therefore, research on FER
+* Corresponding author.† Equal contribution.
+
+Figure 1. POSTER++ results on RAF-DB. We compare
+POSTER++ with three variants of POSTER and other FER algorithms. The results indicate that POSTER++ weighs the number of
+parameters and accuracy better than other FER methods on RAFDB.
+
+is very necessary.
+Due to the increasing attention of FER, it has been
+able to develop rapidly in recent years. Early FER works
+[55, 59, 33, 20] used manual features [6, 34, 23] for the analysis of facial expressions. However, FER algorithms based
+on manual features are often only applicable to specific FER
+tasks. When applied to real world scenarios, it is difficult for
+these algorithms to achieve the same results as in the experimental setting. With the development of deep learning, convolutional neural networks (CNNs) are introduced to FER
+for improving the robustness of the network. Savchenko et
+al. [38] first verified the effectiveness of CNNs such as MobileNet [19], EfficientNet [41] and RexNet [15] for FER.
+Zhao et al. proposed an efficient and robust FER network
+EfficientFace [57] for the analysis of facial expressions in
+the wild. Nevertheless, convolution-based FER algorithms
+cannot consider the global information of the image due to
+the limitation of convolutional local receptive field. Influenced by the vision transformer, Xue et al. [51] designed the
+first transformer-based FER network to model long-range
+dependencies for FER. Kim et al. [24] improved the vision
+transformer (ViT) to combine both global and local features
+so that ViT can be adapted to FER task.
+
+Among many excellent FER works, POSTER [58]
+stands out with state-of-the-art (SOTA) performance.
+POSTER mainly solves three key issues of FER at the
+same time: inter-class similarity, intra-class discrepancy
+and scale sensitivity. POSTER cleverly combines facial
+landmark with image features through a network design of
+two-stream pyramidal cross-fusion transformer. With the
+difference and sparsity of landmark, POSTER successfully
+solves the issue of inter-class similarity and intra-class discrepancy in FER. The network design of pyramid architecture introduces multi-scale features for POSTER to solve
+the scale sensitivity problem. Along with the solution of
+the three main issues of FER, POSTER shows the amazing
+expression analysis ability.
+Although POSTER works so well on FER, the huge
+number of parameters and expensive computational cost
+brought by its network architecture affects the efficiency of
+FER. To address this issue, we revisit the network design of
+POSTER and improve it to obtain POSTER++. We mainly
+improve POSTER in three directions: two-stream, crossfusion and multi-scale feature extraction. POSTER contains two main branches: image-to-landmark and landmarkto-image. Landmark-to-image branch is essential as the
+core of POSTER to solve inter-class similarity and intraclass discrepancy. The image-to-landmark branch is only
+used to provide information to landmark that it fails to take
+into account. This does not contribute to solving the three
+main issues of FER. Therefore, in POSTER++, we remove
+the image-to-landmark branch from the two-stream design.
+This greatly reduces the computational cost on POSTER.
+For cross-fusion, we use a window-based cross-attention
+mechanism instead of the vanilla cross-attention mechanism in POSTER. The window-based cross-attention mechanism not only provides linear computational complexity
+for POSTER++ but also enhances the local modeling capability of the network. In addition, POSTER++ no longer
+uses an additional pyramid architecture for multi-scale feature extraction. We perform multi-scale feature extraction
+directly from the image backbone as well as from the facial
+landmark detector. For the extracted multi-scale features,
+we use a vision transformer network consisting of only
+two layers of transformer modules for integration. Based
+on the above designs, our POSTER++ becomes a simpler
+and more powerful facial expression recognition network.
+It achieves SOTA performance on several standard FER
+datasets with only 8.4G floating point operations (FLOPs)
+and 43.7M parameters (Param). Figure 1 demonstrates the
+superiority of POSTER++.
+Specially, POSTER++ reached 92.21% on RAF-DB
+[29], 67.49% on AffectNet [32] (7 cls) and 63.77% on AffecNet (8 cls), respectively. This is better than POSTER
+(RAF-DB with 92.05%, AffectNet (7 cls) with 67.31% and
+AffectNet (8 cls) with 63.34%). And POSTER++ offers a
+
+smaller Param (43.7M vs. 71.8M) and FLOPs (8.4G vs.
+15.7G). We hope that our work could contribute to the design of future FER models.
+In general, we summarize the contributions of this paper
+as follows:
+1) We design POSTER++ by modifying POSTER from
+three perspectives: two-stream, cross-fusion and feature extraction. Compared with POSTER, POSTER++
+is simpler and stronger.
+2) POSTER++ shows state-of-the-art performance on
+several standard FER datasets such as RAF-DB, AffecNet and CAER-S. This shows the powerful expression
+analysis capability of POSTER++.
+3) POSTER++ greatly reduces the FLOPs and Param of
+POSTER. Specifically, POSTER++ reduces 28.1M of
+Param and 7.3G of FLOPs. This greatly improves the
+computational efficiency of the model.
+
+2. Related Work
+2.1. Facial Expression Recognition
+The study of FER has become very popular in recent years as more and more researchers focus on humancomputer interaction. Zhao et al. [55] used the manual feature LBP [34] for the research of FER with good results.
+Zhong et al. [59] proposed a two-stage multitask sparse
+learning framework (MTSL) for the FER task by exploring some common and specific information among different expressions. Savchenko et al. [38] studied lightweight
+convolutional neural networks for FER task learning and
+verified the effectiveness of CNNs for FER. Sang et al. [37]
+focused on reducing intra-class variation in facial expression depth features and introduced a dense convolutional
+network [21] for the FER task. PSR [45] solves the practical issues associated with individual wild images in FER
+in terms of pose, orientation and input resolution with its
+super-resolution pyramidal network architecture. Zhang et
+al. [54] proposed an erasing attention consistency method to
+handle the noise-labeled facial expression recognition task
+that is more challenging than the conventional FER.
+With the rise of transformer in the field of computer vision, many FER methods combined with transformer have
+emerged. The vision transformer was first used for the study
+of FER by Xue et al. [51] and achieved state-of-the-art performance. VTFF [31] excels in dealing with facial expression recognition tasks in the wild by virtue of its feature fusion. Huang et al. designed the teacher-student model PIDViT [22] for modeling the probability distribution of frontal
+and multi-pose facial expressions, and solved the problem
+of pose change and occlusion in FER. Zhao et al. [9] combined global and local attention in order to address the two
+key issues of occlusion and pose change in FER. POSTER
+
+Figure 2. Pipeline of POSTER. POSTER mainly contains facial landmark detector, image backbone, cross-fusion transformer encoders
+and pyramid network.
+
+[58] solves the intra-class discrepancy, inter-class similarity and scale sensitivity issues of FER in the same time
+by integrating image features with facial landmark features
+through two-stream, cross-fusion and pyramid design.
+However, the huge computational cost of POSTER has
+prevented researchers from investigating further improvements in FER. To solve this issue, we improved the architecture of POSTER and proposed POSTER++, which is simpler and more powerful for FER tasks.
+
+2.2. Vision Transformer
+Recently vision transformer has been widely used for
+computer vision tasks on large scale datasets with its excellent ability to model long distance dependencies.
+Dosovitskiy et al. [8] pioneered the introduction of transformer from the field of natural language processing to computer vision. Touvron et al. [42] used a teacher-student
+strategy to accelerate the training of transformer by distilling tokens. Zhou et al. [60] found that the reason why
+the transformer quickly saturates at deeper levels is that
+the attention map becomes increasingly similar as the transformer goes deeper. Based on this observation, they proposed the Re-attention model to regenerate the attention
+map in order to enhance the diversity among layers at a
+small computational cost. Touvron et al. also designed CaiT
+[43], a deep vision transformer for optimal image classification. To solve the issue that ViT is inferior to traditional
+ResNet [17] on datasets without huge data size, Yuan et al.
+proposed T2T-ViT [52]. Besides, Hassani et al. proposed
+CCT [16] which uses convolution rather than patch embedding layer for self-attention processing. This introduces
+convolutional inductive bias for the transformer. Chen et
+al. proposed CrossViT [4], which combines image patches
+of different sizes by dual branches to produce stronger image features. Heo et al. [18] also verified whether pooling
+layers bring advantages to ViT as they do in convolutional
+neural networks (CNNs). Liu et al. [30] reduced the attention mechanism from quadratic computational complexity
+to linear by window attention and the design of a shift win-
+
+dow scheme. Graham et al. grafted CNN with Transformer
+to obtain LeViT [13] with higher accuracy and faster speed.
+Wu et al. have designed a new architecture called convolutional visual transformer CVT [50], which improves the
+performance and efficiency of ViT by introducing convolution into vision transformer to produce the better results of
+both designs. Chen et al. proposed a new architecture with
+a pyramidal structure and a novel region-to-local-attention
+vision transformer, RegionViT [3]. Wang et al. [48] introduced ViT into a CNN-like pyramid structure for intensive
+prediction tasks such as object detection and semantic segmentation.
+The architectural design of these vision transformer efforts inspires our improvements for POSTER. This leads to
+a better trade-off between accuracy and computational complexity in FER with our POSTER++.
+
+3. Method
+In this section, we first review the POSTER process. We
+then describe the overall architecture of POSTER++ and
+discuss the specific details of POSTER++ in three directions: two-stream, cross-fusion, and multi-scale feature extraction.
+
+3.1. A brief review of POSTER
+POSTER contains four main core designs: facial landmark detector, image backbone, cross-fusion transformer
+encoders and pyramid network. Given the input image
+X ∈ RH×W ×3 , POSTER obtain the image features Ximg
+and landmark features Xlm by facial landmark detector and
+image backbone, respectively.
+The image features Ximg ∈ RN ×D as well as the landmark features Xlm ∈ RN ×D are mapped into three matrices respectively: image query matrix Qimg , image key
+matrix Kimg , image value matrix Vimg and landmark query
+matrix Qlm , landmark key matrix Klm , landmark value matrix Vlm in the cross-fusion transformer encoder. Specifically expressed as:
+
+Figure 3. The overview of POSTER++ architecture. LM Fi and IM Fi denotes facial landmark features and image features at the i-th level
+of POSTER++ respectively.
+
+Qimg = Ximg Wq1 , Qlm = Xlm Wq2 ,
+Kimg = Ximg Wk1 , Klm = Xlm Wk2 ,
+
+(1)
+
+Vimg = Ximg Wv1 , Vlm = Xlm Wv2 ,
+where Wq1 , Wq2 , Wk1 , Wk2 , Wv1 and Wv2 ∈ RD×D are
+the mapping matrix.
+The cross-fusion transformer encoder uses the vanilla
+cross-attention mechanism to interact image features and
+landmark features respectively. It is defined as follows:
+√
+Attention(img) = softmax(Qlm KTimg / d)Vimg ,
+√
+Attention(lm) = softmax(Qimg KTlm / d)Vlm ,
+
+(2)
+
+where sof tmax(·) is softmax [1] activation function and
+√1 is an appropriately normalized scaling factor used to
+d
+prevent the gradient from being too small.
+In summary cross-fusion transformer encoder can be denoted as:
+X’img = Attention(img) + Ximg ,
+Ximg o = MLP(Norm(X’img )) + X’img ,
+X’lm = Attention(lm) + Xlm ,
+
+(3)
+
+Xlm o = MLP(Norm(X’lm )) + X’lm ,
+where M LP (·) is multi-layer perceptron and N orm (·)
+denotes the normalization operation.
+Finally, POSTER extracts and integrates multi-scale features of images and landmarks by the pyramid network design. The specific details are shown in Figure 2.
+
+3.2. Architecture
+Figure 3 shows the pipeline for POSTER++. The
+POSTER++ keeps the facial landmark detector and image backbone in POSTER. In difference, we remove the
+POSTER pyramid architecture and the image-to-landmark
+
+branch of the two-stream design. Meanwhile, we perform multi-scale feature extraction directly from the facial landmark detector and image backbone. And we introduce a small vision transformer consisting of only two
+layers of vanilla tranformer blocks in POSTER++ to integrate multi-scale features. Moreover, we design the new
+cross-fusion transformer encoder with window-based crossattention mechanism. Next, we discuss the detailed modifications to POSTER++.
+
+3.3. Two-stream
+Methods
+Baseline
+POSTER
+POSTER w/o image to landmark branch
+POSTER w/o landmark to image branch
+
+RAF-DB
+91.00
+92.05
+91.82
+91.62
+
+Table 1. Ablation study of two branches in cross-fusion of
+POSTER. The baseline in the table keeps the baseline setting in
+POSTER.
+
+Although two-stream is central to the design of
+POSTER, POSTER does not explore which branch of twostream actually plays a major role. Thus, in this section, we
+first perform an ablation study of the two-stream to learn the
+contribution of the two branches to the FER. Table 1 shows
+the ablation results. We see that on the RAF-DB dataset,
+the accuracy of POSTER slips by 0.23 after missing the image to landmark branch. If the landmark-to-image branch is
+missing, the accuracy of POSTER on RAF-DB is reduced
+by 0.43. This indicates that although the image-to-landmark
+branch contributes to the POSTER FER performance, it is
+the landmark-to-image branch that plays a decisive role in
+POSTER. Next, we analyze the above results at the theoretical level.
+Discussion. The two-stream design in POSTER is mainly
+used to solve the issues of intra-class discrepancy and interclass similarity in FER. It includes landmark-to-image and
+image-to-landmark branches. We revisit the influence of
+the two branches on POSTER. In the landmark-to-image
+
+Figure 4. Input images (row 1), facial landmark images (row 2),
+landmark-to-image branching attention visualization results (row
+3). We visualize the attention map belonging to the last layer of the
+landmarks to image branching for high-level features in POSTER.
+We can observe that with the help of landmark features, the attention map focuses more on the outstanding areas of face and less on
+the areas common to face.
+
+branch, the landmark features interact with the image features as queries Qlm in the cross-attention mechanism. Image features are guided by landmark features to more easily
+represent salient regions of facial expressions when dealing with intra-class discrepancy issue. Also benefiting from
+the sparsity of landmark features, image features guided
+by landmark features reduce the focus on regions where
+faces are prevalent. This helps to reduce the impact of
+inter-class similarity in FER. The results of the visualization of landmark-to-image branch attention in Figure 4 also
+validate the above statements. Therefore, the landmark-toimage branch in the two-stream is essential and needs to
+be retained. For the image-to-landmark branch, the image
+features interact with the landmark features as query Qimg
+to compensate for the lack of landmark features. Although
+this also benefits the FER task to some extent, it does not
+contribute to solving the issues of inter-class similarity and
+intra-class discrepancy as well as comes with a huge computational cost. As POSTER++ aims to solve the main
+POSTER FER problem while reducing its computational
+consumption. Thus, by making a trade-off between computational cost and accuracy of image-to-landmark branch,
+we eventually remove the image-to-landmark branch in the
+two-stream design.
+
+3.4. Cross-fusion
+In POSTER++ we use window-based cross-attention
+mechanism instead of vanilla cross-attention mechanism in
+POSTER for the purpose of linear computation. Figure 5
+illustrates the detailed differences between the two crossattention mechanisms. For image features Ximg ∈ RN ×D ,
+we first divide them into several non-overlapping windows
+zimg ∈ RM ×D , where zimg contains M tokens. For the
+landmark feature Xlm ∈ RC×H×W , we first down-sample
+
+Figure 5. Window-based cross attention mechanism and vanilla
+cross attention mechanism.
+
+it to the window size zlm ∈ Rc×h×w , where c = D, M =
+h × w. Then we reshape it according to the shape of Zimg .
+At this point, the cross-attention with I heads in a local window can be formulated as:
+q = zlm wq , k = zimg wk , v = zimg wv ,
+√
+o(i) = θ(q(i) k(i)T / d + b)v(i) , i = 1,. . . ,I,
+
+(4)
+
+o = [o(1) , . . . , o(I) ]wo ,
+where wq , wk , wv , wo are the mapping matrix, respectively.
+θ (·) is the softmax function. [·] denotes the merge operation
+and b ∈ RI×I is the relative position bias.
+We perform the above cross-attention calculation for
+all windows. We refer to this cross-attention mechanism
+as window-based multi-head cross-attention (W-MCSA).
+Thus the cross-fusion transformer encoder in POSTER++
+can be expressed as follows:
+X’img = W-MCSA(img) + Ximg ,
+Ximg o = MLP(Norm(X’img )) + X’img ,
+
+(5)
+
+Computational Complexity Analysis. Since the query in
+the two types of cross-attention computation keeps the same
+shape as the key, value, we can use the multi-head selfattention and the window-based multi-head self-attention
+complexity to represent their computational complexity.
+This can be indicated as follows:
+Ω(MCSA) = 4ND2 + 2N2 D,
+Ω(W-MCSA) = 4ND2 + 2M2 ND,
+
+(6)
+
+According to Eqn 6, we can find that the window-based
+cross-attention mechanism we use successfully reduces the
+computational complexity of cross-fusion in POSTER from
+square level to linear level. This further improves the computational efficiency of POSTER++.
+
+Train size
+12271
+280401
+283501
+44996
+
+Test size
+3068
+3500
+4000
+20987
+
+Classes
+7
+7
+8
+7
+
+Table 2. Detailed size of the experimental dataset.
+
+3.5. Multi-scale feature extraction
+From Figure 3, we can observe that POSTER++ removes the pyramid design from POSTER. Moreover, in
+POSTER++, we extract multi-scale features directly from
+facial landmark detector and image backbone. And we also
+add a small vision transformer network to POSTER++ for
+the integration of multi-scale features. For the obtained
+multi-scale features o1 , o2 , o3 , we directly merge in the token dimension and using the vanilla transformer blocks for
+processing. This process is specifically described as:
+o = [o1 , o2 , o3 ],
+o’ = MSA(o) + o,
+
+Dataset
+RAF-DB
+AffectNet (7 cls)
+AffectNet (8 cls)
+CAER-S
+
+(7)
+
+oout = MLP(Norm(o’)) + o’,
+where M SA (·) represents multi-head self-attention mechanism. For above design we discuss as follows.
+Discussion. POSTER adopts the pyramid structure to solve
+the scale sensitivity problem in FER. However, we consider
+that the pyramid structure design is only an up-sampling and
+down-sampling operation on the basis of the same scale feature map. Although it provides multi-scale information to
+some extent, we believe that it is not as good as multi-scale
+feature extraction directly from the network. For the integration of multi-scale features, we believe that the vanilla
+transformer block is sufficient for this task. We combine
+the tokens of all scale feature maps together, and the attention mechanism can model long-range dependencies for all
+scale tokens. Thus, different scales of token information are
+delivered in the transformer block.
+
+4. Experiments
+We verify the effectiveness of POSTER++ on several
+standard FER datasets such as RAF-DB [29], AffectNet
+[32] and CAER-S [27]. In the following, we first compare
+POSTER++ with SOTA methods. We then conduct a series of method analysis and ablation studies on POSTER++.
+More detailed experimental setup, more experimental results and visualization results are detailed in the Appendix.
+
+4.1. Experiment Setup
+Datasets. We evaluat the FER performance of POSTER++
+on the widely used RAF-DB, AffectNet and CAER-S
+datasets. The Real-world Affective Faces Database (RAFDB) is a large-scale database of facial expressions, annotated by 315 staff members (students and faculty members
+
+of the University). For the selection of expressions, RAFDB selected six basic emotions as well as neutral emotions
+from a range of expressions (e.g., smile, cackle, cry, anger,
+fear, dread, fear, shock, surprise, disgust, and no expression), for a total of seven expressions for expression annotation. It mainly contains 12,271 training images as well
+as 3,068 test images. AffectNet is currently the largest publicly available dataset in the FER field. It contains about 1M
+images of faces associated with emotional words. It mainly
+contains 8 categories of primary emotions (neutral, happy,
+angry, sad, fear, surprise, disgust,contempt). We mainly use
+AffectNet settings based on class 7 (excluding contempt) as
+well as class 8. AffectNet (7 cls) consists of 280K training
+images and 3.500 validation images (500 images per category). AffectNet (8 cls) consists of 283K training images
+and 4.000 validation images (500 images per category). The
+CAER-S dataset was obtained from the CAER dataset containing 65,983 images. It is mainly divided into 7 types of
+expressions: neutral, happy, sad, surprised, fear, disgust and
+anger. In the FER task we used 44996 images for training
+and 20987 images for testing. The specific dataset configuration is shown in Table 2.
+Year
+RAF-DB AffectNet (7 cls) AffectNet (8 cls)
+Methods
+SCN [46]
+CVPR 2020
+87.03
+60.23
+PSR [45]
+CVPR 2020
+88.98
+63.77
+60.68
+CVPR 2020
+85.53
+59.35
+LDL-ALSG [5]
+TIP 2020
+86.90
+RAN [47]
+DACL [11]
+WACV 2020
+87.78
+65.20
+KTN [28]
+TIP 2021
+88.07
+63.97
+CVPR 2021
+89.42
+63.11
+DMUE [39]
+FDRL [36]
+CVPR 2021
+89.47
+VTFF [31]
+TAC 2021
+88.14
+61.85
+ARM [40]
+2021
+90.42
+65.20
+61.33
+TransFER [51]
+ICCV 2021
+90.91
+66.23
+DAN [49]
+2021
+89.70
+65.69
+62.09
+EfficientFace [57]
+AAAI 2021
+88.36
+63.70
+60.23
+MA-Net [56]
+TIP 2021
+88.42
+64.53
+60.29
+Meta-Face2Exp [53] CVPR 2022
+88.54
+64.23
+EAC [54]
+ECCV 2022
+90.35
+65.32
+POSTER [58]
+2022
+92.05
+67.31
+63.34
+POSTER++
+92.21
+67.49
+63.77
+
+Table 3. Comparison results with SOTA FER algorithm on RAFDB and AffectNet.
+
+Settings. Similar to POSTER [58], we also use the ir50
+[7] network pre-trained on the Ms-Celeb-1M [14] dataset
+as the image backbone. And MobileFaceNet [2] with frozen
+weights is used as our facial landmark detector. We employ
+the Adam [25] optimizer for 200 epochs training. A training scheme with a batch size of 144, a learning rate of 3.5e-4
+and a weight decay of 1e-4 was used. We use random hor-
+
+Dataset
+RAF-DB
+RAF-DB
+AffectNet (7 cls)
+AffectNet (7 cls)
+AffectNet (8 cls)
+AffectNet (8 cls)
+
+Method
+POSTER
+POSTER++
+POSTER
+POSTER++
+POSTER
+POSTER++
+
+Neutral
+92.35
+92.06
+67.20
+65.40
+59.40
+60.60
+
+Happy
+96.96
+97.22
+89.00
+89.40
+80.20
+76.40
+
+Sad
+91.21
+92.89
+67.00
+68.00
+66.60
+66.80
+
+Surprise
+90.27
+90.58
+64.00
+66.00
+63.60
+65.60
+
+Fear
+67.57
+68.92
+64.80
+64.20
+63.60
+63.00
+
+Disgust
+75.00
+71.88
+56.00
+54.40
+59.80
+58.00
+
+Anger
+88.89
+88.27
+62.60
+65.00
+58.80
+60.20
+
+Contempt
+54.71
+59.52
+
+mean Acc
+86.04
+85.97
+67.23
+67.45
+63.34
+63.76
+
+Table 4. Class-wise accuracy of POSTER and POSTER++ on RAF-DB, AffectNet (7 cls), and AffectNet (8 cls) datasets. Green, blue and
+red mark the highest value of single category in RAF-DB, AffectNet (7 cls) and AffectNet (8 cls) respectively.
+
+izontal flipping and random erasing as our data augmentation methods. For the loss function, we choose the standard
+cross-entropy loss. We eventually realized POSTER++ on
+a single NVIDIA RTX 3090 via Pytorch.
+
+4.2. Comparison with SOTA FER Methods
+Results on RAF-DB. We compare POSTER++ with the
+SOTA FER algorithms in recent years on the RAF-DB
+datasets in Table 3. The experimental results show
+that POSTER++ exhibits SOTA performance on RAF-DB.
+Compared with POSTER (92.05), POSTER++ improved by
+0.16. +1.86 for POSTER++ over EAC (90.35), and +1.3 for
+POSTER++ over TransFER (90.91). This shows the superiority of PSTER V2 on RAF-DB. Table 4 shows the comparison of POSTER++ with POSTER for RAF-DB individual
+classes and average accuracy. Although POSTER++ outperformed POSTER in several categories, the average accuracy was slightly inferior to POSTER.
+Results on AffectNet. In Table 3, we also conduct FER
+experiments on AffectNet (7 cls) as well as AffectNet (8
+cls). We observe that POSTER++ exhibits SOTA FER effect in both AffectNet (7 cls) and AffectNet (8 cls). Compared with POSTER (67.31, 63.34), POSTER++ increases
+0.18, 0.43 on AffectNet (7 cls) and AffectNet (8 cls), respectively. On AffectNet (8 cls), POSTER++ is higher than
+DAN (62.09) by 1.68. On AffectNet (7 cls), POSTER++
+is greater than TransFER (66.23) with 1.26. This demonstrates that POSTER++ can maintain excellent FER performance even on larger datasets. Table 4 shows that
+POSTER++ exceeds POSTER for the majority of individual class accuracies in both AffectNet (7 cls) and AffectNet
+(8 cls). As a result, POSTER++ achieves better average accuracy than POSTER on AffectNet.
+Results on CAER-S. We compare POSTER++ with SOTA
+FER methods of recent years on the CAER-S dataset. Our
+POSTER++ in Table 5 performs extremely well on the
+CAER-S dataset. Specifically, POSTER++ scored 92.98
+on CAER-S. +0.27 for POSTER++ over POSTER (92.73).
++3.12 for POSTER++ over GLAMOR-Net (89.88), and
++4.58 for POSTER++ over MA-Net (88.42). +7.13 for
+POSTER++ over EfficientFace (85.87). The excellent results on CAER-S prove that the success of POSTER++ is
+
+Methods
+DSN [10]
+CAER-Net-S [27]
+GRERN [12]
+EfficientFace [57]
+MA-Net [56]
+GLAMOR-Net [26]
+POSTER [58]
+POSTER++
+
+Year
+ICML 2018
+ICCV 2019
+IEEE Access 2020
+AAAI 2021
+TIP 2021
+NCA 2021
+2022
+-
+
+CAER-S
+75.19
+73.51
+81.31
+85.87
+88.42
+89.88
+92.73
+93.00
+
+Table 5. Comparison results with SOTA FER algorithm on CAERS.
+
+no accident. It shows the powerful generalization ability of
+POSTER++.
+
+4.3. FLOPs and Param Comparison
+Methods
+DMUE [39]
+TransFER [51]
+POSTER-T [58]
+POSTER-S [58]
+POSTER [58]
+POSTER++
+
+#Param
+78.4M
+65.2M
+52.2M
+62.0M
+71.8M
+43.7M
+
+#FLOPs
+13.4G
+15.3G
+13.6G
+14.7G
+15.7G
+8.4G
+
+RAF-DB
+89.42
+90.91
+91.36
+91.54
+92.05
+92.21
+
+AffectNet
+63.11
+66.23
+66.87
+67.13
+67.31
+67.49
+
+Table 6. Comparison of Param and FLOPs with POSTER.
+
+From Table 6, we can see that POSTER++ achieves
+better FER results with smaller Param and FLOPs than
+POSTER and other algorithms. Compared to POSTERT, POSTER++ reduces 8.5M Param and 5.2G FLOPs,
+while increasing 0.85% on RAF-DB and 0.62% on AffectNet. Compared to POSTER-S, POSTER++ reduces
+18.3M Param and 6.3G FLOPs, while increasing 0.67% on
+RAF-DB and 0.36% on AffectNet. Compared to POSTER,
+POSTER++ reduces 28.1M Param and 7.3G FLOPs, while
+increasing 0.16% on RAF-DB and 0.18% on AffectNet.
+Therefore, POSTER++ would be a better choice for the
+FER task.
+
+4.4. Method Analysis
+In this sub-section, we present a method analysis for the
+small ViT model we used in POSTER++ on RAF-DB.
+Vit depth. Here, we investigate the impact of different
+depths for ViT on the FER performance of POSTER++. In
+
+Multi-scale feature extraction. We first verify the effectiveness of extracting multi-scale features directly in the
+network. In this ablation experiment, we only use the image backbone as well as the last layer of feature maps from
+the facial landmark detector for cross-fusion. From Table 8
+we observe that POSTER++ degrades significantly on the
+RAF-DB and AffectNet datasets when multi-scale feature
+extraction is not performed. This shows that our method
+of directly extracting multi-scale features can also solve the
+scale sensitivity issue of FER. Also, this indicates the importance of multi-scale features for FER.
+Figure 6. Influence of different depth ViT models on POSTER++
+for RAF-DB.
+
+Figure 6, we show the influence of the ViT model with depth
+{2,4,6,8} on POSTER++. We observe that for multi-scale
+integration we do not need to increase the depth of the ViT
+model. The ViT model with a depth of 2 is sufficient to
+handle the FER task. A deeper ViT model hurts the performance of POSTER++ instead.
+ViT w/ pre-trained weights
+3
+7
+
+RAF-DB
+92.21
+91.49
+
+AffectNet
+67.49
+60.20
+
+Table 7. Impact of pre-trained ViT models for POSTER++ on
+FER.
+
+Pre-trained Vit. We study the influence of the pre-trained
+ViT model on POSTER++. We use the ViT pre-trained
+weights on ImagenNet-21K [35] for POSTER++. Table 7
+shows that the performance of POSTER++ on FER drops
+after using the pre-trained ViT model. We argue that this is
+mainly due to the fact that the pre-trained ViT model acts
+mainly on the feature extraction of the image-level inputs.
+However, in POSTER++, ViT performs the multi-scale feature integration task of feature-level inputs. The difference
+in input and task resulted in the pre-trained ViT not working
+on POSTER++.
+
+Vit. For the ViT used for multi-scale feature integration, we
+ablate it. We directly sum several different scale features
+for FER. According to the experimental results in Table 8,
+POSTER++ decreases by 0.35 on RAF-DB and 0.57 on
+AffectNet when multi-scale feature integration is not performed by ViT. This suggests that ViT facilitates multi-scale
+feature integration.
+W-MCSA. We validate the effectiveness of W-MCSA for
+cross-fusion by ablation experiments. In this experiment,
+we use the vanilla cross-attention mechanism to replace our
+window-based cross-attention mechanism. We observed
+that POSTER++ degraded on both RAF-DB and AffectNet datasets. This shows that the W-MCSA we use both
+improves the FER accuracy and reduces the computational
+complexity of POSTER. Thus, W-MCSA is essential for
+POSTER++.
+Cross-fusion. This experiment mainly verifies the role of
+landmark-to-image branch for POSTER++. In the ablation
+experiments on cross-fusion, we merge the extracted image
+multi-scale features and landmark multi-scale features directly and integrate them by ViT. Table 8 shows that the effectiveness of POSTER++ on RAF-DB as well as AffectNet
+drops sharply when cross-fusion is not applied. This shows
+that cross-fusion is the key for POSTER++ to achieve SOTA
+FER. Also, this indicates that addressing inter-class similarity and intra-class discrepancy are particularly important for
+FER task.
+
+4.5. Ablation Study
+
+5. Conclusion
+Methods
+POSTER++
+w/o multi-scale feature extraction
+w/o ViT
+w/o W-MCSA
+w/o cross-fusion
+
+RAF-DB
+92.21
+91.47
+91.86
+91.56
+91.39
+
+AffectNet
+67.49
+66.51
+66.92
+67.24
+66.35
+
+Table 8. Results of ablation experiments of key components of
+POSTER++.
+
+We validate the effectiveness of our POSTER improvement component on the RAF-DB as well as on the AffectNet dataset.
+
+In this paper, we improve POSTER from three directions: two-stream, cross-fusion, and multi-scale feature extraction to obtain a simpler and stronger vision transformer
+for FER, POSTER++. Extensive FER experimental results
+show that POSTER++ achieves the state-of-the-art FER
+performance while greatly reducing the Param and FLOPs
+of POSTER. This suggests that POSTER++ achieves a better trade-off between accuracy and computational complexity. Therefore, POSTER++ is a better choice for the FER
+task.
+
+Acknowledge
+This work was supported by Public-welfare Technology
+Application Research of Zhejiang Province in China under Grant LGG22F020032, and Key Research and Development Project of Zhejiang Province in China under Grant
+2021C03137.
+
+References
+[1] Peter F Brown, Vincent J Della Pietra, Peter V Desouza,
+Jennifer C Lai, and Robert L Mercer. Class-based n-gram
+models of natural language. Computational linguistics,
+18(4):467–480, 1992. 4
+[2] Cunjian Chen. PyTorch Face Landmark: A fast and accurate
+facial landmark detector, 2021. 6
+[3] Chun-Fu Chen, Rameswar Panda, and Quanfu Fan. Regionvit: Regional-to-local attention for vision transformers.
+arXiv preprint arXiv:2106.02689, 2021. 3
+[4] Chun-Fu Richard Chen, Quanfu Fan, and Rameswar Panda.
+Crossvit: Cross-attention multi-scale vision transformer for
+image classification. In Proceedings of the IEEE/CVF international conference on computer vision, pages 357–366,
+2021. 3
+[5] Shikai Chen, Jianfeng Wang, Yuedong Chen, Zhongchao
+Shi, Xin Geng, and Yong Rui. Label distribution learning
+on auxiliary label space graphs for facial expression recognition. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, pages 13984–13993,
+2020. 6
+[6] Navneet Dalal and Bill Triggs. Histograms of oriented gradients for human detection. In 2005 IEEE computer society conference on computer vision and pattern recognition
+(CVPR’05), volume 1, pages 886–893. Ieee, 2005. 1
+[7] Jiankang Deng, Jia Guo, Niannan Xue, and Stefanos
+Zafeiriou. Arcface: Additive angular margin loss for deep
+face recognition. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, pages
+4690–4699, 2019. 6
+[8] Alexey Dosovitskiy, Lucas Beyer, Alexander Kolesnikov,
+Dirk Weissenborn, Xiaohua Zhai, Thomas Unterthiner,
+Mostafa Dehghani, Matthias Minderer, Georg Heigold, Sylvain Gelly, et al. An image is worth 16x16 words: Transformers for image recognition at scale. arXiv preprint
+arXiv:2010.11929, 2020. 3
+[9] Tongle Fan, Guanglei Wang, Yan Li, and Hongrui Wang.
+Ma-net: A multi-scale attention network for liver and tumor
+segmentation. IEEE Access, 8:179656–179665, 2020. 2
+[10] Yingruo Fan, Jacqueline CK Lam, and Victor OK Li. Videobased emotion recognition using deeply-supervised neural networks. In Proceedings of the 20th ACM International Conference on Multimodal Interaction, pages 584–
+588, 2018. 7
+[11] Amir Hossein Farzaneh and Xiaojun Qi. Facial expression
+recognition in the wild via deep attentive center loss. In Proceedings of the IEEE/CVF winter conference on applications
+of computer vision, pages 2402–2411, 2021. 6
+
+[12] Qinquan Gao, Hanxin Zeng, Gen Li, and Tong Tong. Graph
+reasoning-based emotion recognition network. IEEE Access,
+9:6488–6497, 2021. 7
+[13] Benjamin Graham, Alaaeldin El-Nouby, Hugo Touvron,
+Pierre Stock, Armand Joulin, Hervé Jégou, and Matthijs
+Douze. Levit: a vision transformer in convnet’s clothing for
+faster inference. In Proceedings of the IEEE/CVF international conference on computer vision, pages 12259–12269,
+2021. 3
+[14] Yandong Guo, Lei Zhang, Yuxiao Hu, Xiaodong He, and
+Jianfeng Gao. Ms-celeb-1m: A dataset and benchmark for
+large-scale face recognition. In European conference on
+computer vision, pages 87–102. Springer, 2016. 6
+[15] Dongyoon Han, Sangdoo Yun, Byeongho Heo, and
+YoungJoon Yoo. Rexnet: Diminishing representational bottleneck on convolutional neural network. arXiv preprint
+arXiv:2007.00992, 6, 2020. 1
+[16] Ali Hassani, Steven Walton, Nikhil Shah, Abulikemu
+Abuduweili, Jiachen Li, and Humphrey Shi. Escaping the
+big data paradigm with compact transformers. arXiv preprint
+arXiv:2104.05704, 2021. 3
+[17] Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun.
+Deep residual learning for image recognition. In Proceedings of the IEEE conference on computer vision and pattern
+recognition, pages 770–778, 2016. 3
+[18] Byeongho Heo, Sangdoo Yun, Dongyoon Han, Sanghyuk
+Chun, Junsuk Choe, and Seong Joon Oh. Rethinking spatial dimensions of vision transformers. In Proceedings of
+the IEEE/CVF International Conference on Computer Vision, pages 11936–11945, 2021. 3
+[19] Andrew G Howard, Menglong Zhu, Bo Chen, Dmitry
+Kalenichenko, Weijun Wang, Tobias Weyand, Marco Andreetto, and Hartwig Adam. Mobilenets: Efficient convolutional neural networks for mobile vision applications. arXiv
+preprint arXiv:1704.04861, 2017. 1
+[20] Yuxiao Hu, Zhihong Zeng, Lijun Yin, Xiaozhou Wei, Xi
+Zhou, and Thomas S Huang. Multi-view facial expression
+recognition. In 2008 8th IEEE International Conference on
+Automatic Face & Gesture Recognition, pages 1–6. IEEE,
+2008. 1
+[21] Gao Huang, Zhuang Liu, Laurens Van Der Maaten, and Kilian Q Weinberger. Densely connected convolutional networks. In Proceedings of the IEEE conference on computer
+vision and pattern recognition, pages 4700–4708, 2017. 2
+[22] Yin-Fu Huang and Chia-Hsin Tsai. Pidvit: Pose-invariant
+distilled vision transformer for facial expression recognition
+in the wild. IEEE Transactions on Affective Computing,
+2022. 2
+[23] Taskeed Jabid, Md Hasanul Kabir, and Oksam Chae. Local directional pattern (ldp) for face recognition. In 2010
+digest of technical papers international conference on consumer electronics (ICCE), pages 329–330. IEEE, 2010. 1
+[24] Sangwon Kim, Jaeyeal Nam, and Byoung Chul Ko. Facial
+expression recognition based on squeeze vision transformer.
+Sensors, 22(10):3729, 2022. 1
+[25] Diederik P Kingma and Jimmy Ba. Adam: A method for
+stochastic optimization. arXiv preprint arXiv:1412.6980,
+2014. 6
+
+[26] Nhat Le, Khanh Nguyen, Anh Nguyen, and Bac Le. Globallocal attention for emotion recognition. Neural Computing
+and Applications, 34(24):21625–21639, 2022. 7
+[27] Jiyoung Lee, Seungryong Kim, Sunok Kim, Jungin Park, and
+Kwanghoon Sohn. Context-aware emotion recognition networks. In Proceedings of the IEEE/CVF international conference on computer vision, pages 10143–10152, 2019. 6,
+7
+[28] Hangyu Li, Nannan Wang, Xinpeng Ding, Xi Yang, and
+Xinbo Gao. Adaptively learning facial expression representation via cf labels and distillation. IEEE Transactions on
+Image Processing, 30:2016–2028, 2021. 6
+[29] Shan Li, Weihong Deng, and JunPing Du. Reliable crowdsourcing and deep locality-preserving learning for expression recognition in the wild. In 2017 IEEE Conference on
+Computer Vision and Pattern Recognition (CVPR), pages
+2584–2593. IEEE, 2017. 2, 6
+[30] Ze Liu, Yutong Lin, Yue Cao, Han Hu, Yixuan Wei, Zheng
+Zhang, Stephen Lin, and Baining Guo. Swin transformer:
+Hierarchical vision transformer using shifted windows. In
+Proceedings of the IEEE/CVF International Conference on
+Computer Vision, pages 10012–10022, 2021. 3
+[31] Fuyan Ma, Bin Sun, and Shutao Li. Facial expression recognition with visual transformers and attentional selective fusion. IEEE Transactions on Affective Computing, 2021. 2,
+6
+[32] Ali Mollahosseini, Behzad Hasani, and Mohammad H Mahoor. Affectnet: A database for facial expression, valence,
+and arousal computing in the wild. IEEE Transactions on
+Affective Computing, 10(1):18–31, 2017. 2, 6
+[33] Stephen Moore and Richard Bowden. Local binary patterns
+for multi-view facial expression recognition. Computer vision and image understanding, 115(4):541–558, 2011. 1
+[34] Timo Ojala, Matti Pietikainen, and Topi Maenpaa. Multiresolution gray-scale and rotation invariant texture classification
+with local binary patterns. IEEE Transactions on pattern
+analysis and machine intelligence, 24(7):971–987, 2002. 1,
+2
+[35] Tal Ridnik, Emanuel Ben-Baruch, Asaf Noy, and Lihi
+Zelnik-Manor. Imagenet-21k pretraining for the masses.
+arXiv preprint arXiv:2104.10972, 2021. 8
+[36] Delian Ruan, Yan Yan, Shenqi Lai, Zhenhua Chai, Chunhua
+Shen, and Hanzi Wang. Feature decomposition and reconstruction learning for effective facial expression recognition.
+In Proceedings of the IEEE/CVF Conference on Computer
+Vision and Pattern Recognition, pages 7660–7669, 2021. 6
+[37] Dinh Viet Sang, Pham Thai Ha, et al. Discriminative deep
+feature learning for facial emotion recognition. In 2018 1st
+International Conference on Multimedia Analysis and Pattern Recognition (MAPR), pages 1–6. IEEE, 2018. 2
+[38] Andrey V Savchenko. Facial expression and attributes recognition based on multi-task learning of lightweight neural networks. In 2021 IEEE 19th International Symposium on Intelligent Systems and Informatics (SISY), pages 119–124. IEEE,
+2021. 1, 2
+[39] Jiahui She, Yibo Hu, Hailin Shi, Jun Wang, Qiu Shen, and
+Tao Mei. Dive into ambiguity: Latent distribution mining and pairwise uncertainty estimation for facial expression
+
+recognition. In Proceedings of the IEEE/CVF Conference
+on Computer Vision and Pattern Recognition, pages 6248–
+6257, 2021. 6, 7
+[40] Jiawei Shi, Songhao Zhu, and Zhiwei Liang. Learning to
+amend facial expression representation via de-albino and
+affinity. arXiv preprint arXiv:2103.10189, 2021. 6
+[41] Mingxing Tan and Quoc Le. Efficientnet: Rethinking model
+scaling for convolutional neural networks. In International
+conference on machine learning, pages 6105–6114. PMLR,
+2019. 1
+[42] Hugo Touvron, Matthieu Cord, Matthijs Douze, Francisco
+Massa, Alexandre Sablayrolles, and Hervé Jégou. Training
+data-efficient image transformers & distillation through attention. In International Conference on Machine Learning,
+pages 10347–10357. PMLR, 2021. 3
+[43] Hugo Touvron, Matthieu Cord, Alexandre Sablayrolles,
+Gabriel Synnaeve, and Hervé Jégou. Going deeper with image transformers. In Proceedings of the IEEE/CVF International Conference on Computer Vision, pages 32–42, 2021.
+3
+[44] Laurens Van der Maaten and Geoffrey Hinton. Visualizing data using t-sne. Journal of machine learning research,
+9(11), 2008. 14
+[45] Thanh-Hung Vo, Guee-Sang Lee, Hyung-Jeong Yang, and
+Soo-Hyung Kim. Pyramid with super resolution for in-thewild facial expression recognition. IEEE Access, 8:131988–
+132001, 2020. 2, 6
+[46] Kai Wang, Xiaojiang Peng, Jianfei Yang, Shijian Lu, and
+Yu Qiao. Suppressing uncertainties for large-scale facial expression recognition. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, pages
+6897–6906, 2020. 6
+[47] Kai Wang, Xiaojiang Peng, Jianfei Yang, Debin Meng, and
+Yu Qiao. Region attention networks for pose and occlusion
+robust facial expression recognition. IEEE Transactions on
+Image Processing, 29:4057–4069, 2020. 6
+[48] Wenhai Wang, Enze Xie, Xiang Li, Deng-Ping Fan, Kaitao
+Song, Ding Liang, Tong Lu, Ping Luo, and Ling Shao.
+Pyramid vision transformer: A versatile backbone for dense
+prediction without convolutions. In Proceedings of the
+IEEE/CVF International Conference on Computer Vision,
+pages 568–578, 2021. 3
+[49] Zhengyao Wen, Wenzhong Lin, Tao Wang, and Ge Xu.
+Distract your attention: Multi-head cross attention network for facial expression recognition. arXiv preprint
+arXiv:2109.07270, 2021. 6
+[50] Haiping Wu, Bin Xiao, Noel Codella, Mengchen Liu,
+Xiyang Dai, Lu Yuan, and Lei Zhang. Cvt: Introducing
+convolutions to vision transformers. In Proceedings of the
+IEEE/CVF International Conference on Computer Vision,
+pages 22–31, 2021. 3
+[51] Fanglei Xue, Qiangchang Wang, and Guodong Guo. Transfer: Learning relation-aware facial expression representations with transformers. In Proceedings of the IEEE/CVF
+International Conference on Computer Vision, pages 3601–
+3610, 2021. 1, 2, 6, 7
+[52] Li Yuan, Yunpeng Chen, Tao Wang, Weihao Yu, Yujun Shi,
+Zi-Hang Jiang, Francis EH Tay, Jiashi Feng, and Shuicheng
+
+Yan. Tokens-to-token vit: Training vision transformers from
+scratch on imagenet. In Proceedings of the IEEE/CVF International Conference on Computer Vision, pages 558–567,
+2021. 3
+[53] Dan Zeng, Zhiyuan Lin, Xiao Yan, Yuting Liu, Fei Wang,
+and Bo Tang. Face2exp: Combating data biases for facial expression recognition. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, pages
+20291–20300, 2022. 6
+[54] Yuhang Zhang, Chengrui Wang, Xu Ling, and Weihong
+Deng. Learn from all: Erasing attention consistency for
+noisy label facial expression recognition. In European Conference on Computer Vision, pages 418–434. Springer, 2022.
+2, 6
+[55] Guoying Zhao and Matti Pietikainen. Dynamic texture
+recognition using local binary patterns with an application
+to facial expressions. IEEE transactions on pattern analysis
+and machine intelligence, 29(6):915–928, 2007. 1, 2
+[56] Zengqun Zhao, Qingshan Liu, and Shanmin Wang. Learning
+deep global multi-scale and local attention features for facial
+expression recognition in the wild. IEEE Transactions on
+Image Processing, 30:6544–6556, 2021. 6, 7
+[57] Zengqun Zhao, Qingshan Liu, and Feng Zhou. Robust
+lightweight facial expression recognition network with label distribution training. In Proceedings of the AAAI conference on artificial intelligence, volume 35, pages 3510–3519,
+2021. 1, 6, 7
+[58] Ce Zheng, Matias Mendieta, and Chen Chen. Poster: A pyramid cross-fusion transformer network for facial expression
+recognition. arXiv preprint arXiv:2204.04083, 2022. 2, 3, 6,
+7
+[59] Lin Zhong, Qingshan Liu, Peng Yang, Bo Liu, Junzhou
+Huang, and Dimitris N Metaxas. Learning active facial
+patches for expression analysis. In 2012 IEEE Conference
+on Computer Vision and Pattern Recognition, pages 2562–
+2569. IEEE, 2012. 1, 2
+[60] Daquan Zhou, Bingyi Kang, Xiaojie Jin, Linjie Yang, Xiaochen Lian, Zihang Jiang, Qibin Hou, and Jiashi Feng.
+Deepvit: Towards deeper vision transformer. arXiv preprint
+arXiv:2103.11886, 2021. 3
+
+Appendix
+A. Implementation Details
+For POSTER V2, we conduct FER experiments on
+the RAF-DB, AffectNet, and CAER-S datasets, respectively. For different datasets, we adopt different detail settings. Specifically, for different datasets, we exploit different learning rates for training according to the settings of
+POSTER V1. Moreover, for AffectNet (8 cls), POSTER
+V2 uses a classification head with a category number of 8
+for prediction. The rest of the settings are consistent with
+the experimental sections in the main text.
+config
+optimizer
+base learning rate
+weight decay
+batch size
+training epochs
+learning rate schedule
+augmentation
+drop path
+num classes
+
+value
+Adam
+3.50E-05
+1.00E-04
+144
+200
+ExponentialLR (gamma=0.98)
+RandomHorizontalFlip(),
+RandomErasing(scale=(0.02, 0.1)).
+linspace(0, 0.5, 5)
+7
+
+Table 9. Supervised training POSTER V2 from scratch on RAFDB.
+
+RAF-DB Settings. We use the Adam optimizer with a
+learning rate of 3.5e-5 for 200 epochs training. The batch
+size is maintained at 144 and the weight decay remains at
+1e-4. The learning rate schedule uses an exponential decay
+with a gamma of 0.98. Data augmentation includes random
+horizontal flipping and random erasure. The specific settings are shown in Table 9.
+config
+optimizer
+base learning rate
+weight decay
+batch size
+training epochs
+learning rate schedule
+augmentation
+drop path
+num classes
+
+value
+Adam
+1.00E-06
+1.00E-04
+144
+200
+ExponentialLR (gamma=0.98)
+RandomHorizontalFlip(),
+RandomErasing(p=1, scale=(0.05, 0.05)).
+linspace(0, 0.5, 5)
+7
+
+Table 10. Supervised training POSTER V2 from scratch on AffectNet (7 cls).
+
+AffectNet (7 cls) Settings. On the AffcetNet (7 cls) dataset,
+we adjust the learning rate to 1e-6. The training epochs remains at 200. The batch size is maintained at 144 and the
+weight decay remains at 1e-4. The learning rate schedule
+uses an exponential decay with a gamma of 0.98. Data augmentation includes random horizontal flipping and random
+erasure. The detailed settings are shown in Table 10.
+
+config
+optimizer
+base learning rate
+weight decay
+batch size
+training epochs
+learning rate schedule
+augmentation
+drop path
+num classes
+
+value
+Adam
+1.00E-06
+1.00E-04
+144
+200
+ExponentialLR (gamma=0.98)
+RandomHorizontalFlip(),
+RandomErasing(p=1, scale=(0.05, 0.05)).
+linspace(0, 0.5, 5)
+8
+
+Table 11. Supervised training POSTER V2 from scratch on AffectNet (8 cls).
+
+AffectNet (8 cls) Settings. We use the Adam optimizer
+with a learning rate of 1e-6 for 200 epochs training. The
+batch size is maintained at 144 and the weight decay remains at 1e-4. The learning rate schedule uses an exponential decay with a gamma of 0.98. Data augmentation
+includes random horizontal flipping and random erasure. In
+addition, we set the number of categories to 8. Table 11
+shows the specific experimental settings.
+config
+optimizer
+base learning rate
+weight decay
+batch size
+training epochs
+learning rate schedule
+augmentation
+drop path
+num classes
+
+value
+Adam
+4.00E-05
+1.00E-04
+144
+200
+ExponentialLR (gamma=0.98)
+RandomHorizontalFlip(),
+RandomErasing(p=1, scale=(0.05, 0.05)).
+linspace(0, 0.5, 5)
+7
+
+Table 12. Supervised training POSTER V2 from scratch on
+CAER-S.
+
+CAER-S Settings. On the CAER-S dataset, we employ the
+Adam optimizer with a learning rate of 4e-5 for 200 epochs
+of training. The batch size is maintained at 144 and the
+weight decay remains at 1e-4. The learning rate schedule
+uses an exponential decay with a gamma of 0.98. Data augmentation includes random horizontal flipping and random
+erasure. The specific settings are shown in Table 12.
+
+B. Detailed Experimental Results
+In this section, we show more detailed experimental results of POSTER V2 on each dataset. And we also show
+the confusion matrix of POSTER V2 in each dataset in Figure 7.
+RAF-DB Results. Figure 8 shows the specific training process of POSTER V2 on RAF-DB. We observe that the training loss and validation loss of POSTER V2 decrease until saturation during the training process. Furthermore, the
+training accuracy and validation accuracy of POSTER V2
+
+Figure 7. The confusion matrix of POSTER V2 on each dataset.
+
+Figure 8. The specific training process of POSTER V2 on RAFDB.
+
+Figure 10. The detailed training process of POSTER V2 on AffectNet (8 cls).
+
+continue to increase until a small fluctuation.
+accuracy of POSTER V2 on AffectNet (8 cls) continues to
+increase, and the validation accuracy has largely been optimal and remains constant. Therefore, we take the same
+early end operation for POSTER V2 on AffectNet (8 cls) as
+we do for AffectNet (7 cls).
+
+Figure 9. The detailed training process of POSTER V2 on AffectNet (7 cls).
+
+AffectNet (7 cls) Results. We show in Figure 9 the detailed
+training of POSTER V2 on AffectNet (7 cls). POSTER V2
+achieves the best training results on AffectNet (7 cls) at an
+early stage. At this point, POSTER V2 achieves the highest
+accuracy on AffectNet (7 cls) for both the training and test
+sets. Therefore, we stop training in time to save training
+costs.
+AffectNet (8 cls) Results. Figure 10 shows the exact performance of POSTER V2 on AffectNet (8 cls). We observe
+a similar phenomenon on AffectNet (8 cls) as POSTER V2
+did on AffectNet (7 cls). POSTER V2 also reach saturation
+in the early stages of AffectNet (8 cls). POSTER V2 training loss continues to show a decreasing trend, yet there is a
+small increase in validation loss. Nevertheless, the training
+
+Figure 11. The detailed training process of POSTER V2 on
+CAER-S.
+
+CAER-S Results. We show the specific training performance of POSTER V2 on CAER-S in Figure 11. Compared
+with other datasets, POSTER V2 has a relatively long saturation time on the CAER-S dataset. During the training
+process, the loss on the POSTER V2 training and validation
+sets decreases and saturates at a late stage. Meanwhile, the
+accuracy of POSTER V2 on both the training and validation
+sets has been increasing.
+
+Figure 12. Comparison of POSTER V2 and POSTER V1 high-dimensional space t-SNE visualization results. POSTER V1 t-SNE visualization results (first row), POSTER V2 t-SNE visualization results (second row).
+
+Figure 13. POSTER V2 cross-fusion stage attention visualization results. For each triplet, we show the input image (left), the landmark
+image (middle), and attention map (right).
+
+C. Visualization
+T-SNE Visualization. We visualized the high-dimensional
+features of POSTER V1 and POSTER V2 using t-SNE
+[44]. As can be seen in Figure 12, both POSTER V2 and
+POSTER V1 present good t-SNE visualization results on
+RAF-DB and CAER-S datasets. There is almost no significant difference between the t-SNE visualization results of
+POSTER V1 and POSTER V2 on CAER-S. POSTER V2
+has a closer intra-class distance than POSTER V1 on RAFDB. Although POSTER V1 and POSTER V2 have poor tSNE visualization results on AffectNet (7 cls) and AffectNet (8 cls). But the inter-class distance between clusters in
+POSTER V2 is further than POSTER V1. Above results
+
+indicates that POSTER V2 is better than POSTER V1 in alleviating the issues of inter-class similarity and intra-class
+discrepancy in FER.
+Attention Visualization. We visualize the attention map of
+the highest-level features of the POSTER V2 cross-fusion
+stage. From Figure 13, we observe that POSTER V2 successfully captures important facial expression features with
+the help of facial landmark features.
+
+

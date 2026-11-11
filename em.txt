@@ -1,0 +1,661 @@
+arXiv:2501.08199v1 [cs.CV] 14 Jan 2025
+
+EmoNeXt: an Adapted ConvNeXt for Facial
+Emotion Recognition
+Yassine El Boudouri
+
+Amine Bohi
+
+CESI LINEACT Laboratory
+UR 7527
+Dijon, 21800, France
+yelboudouri@cesi.fr
+
+CESI LINEACT Laboratory
+UR 7527
+Dijon, 21800, France
+abohi@cesi.fr
+
+Abstract—Facial expressions play a crucial role in human
+communication serving as a powerful and impactful means to
+express a wide range of emotions. With advancements in artificial
+intelligence and computer vision, deep neural networks have
+emerged as effective tools for facial emotion recognition. In this
+paper, we propose EmoNeXt, a novel deep learning framework
+for facial expression recognition based on an adapted ConvNeXt
+architecture network. We integrate a Spatial Transformer Network (STN) to focus on feature-rich regions of the face and
+Squeeze-and-Excitation blocks to capture channel-wise dependencies. Moreover, we introduce a self-attention regularization
+term, encouraging the model to generate compact feature vectors.
+We demonstrate the superiority of our model over existing
+state-of-the-art deep learning models on the FER2013 dataset
+regarding emotion classification accuracy.
+Index Terms—Facial expression recognition, Deep-learning,
+Convolutional neural network, Emotion classification.
+
+I. I NTRODUCTION
+Facial expressions are a powerful means of non-verbal
+communication in face-to-face interactions, allowing humans
+to convey a wide range of information. According to Albert
+Mehrabian, facial expressions are more effective than words
+in face-to-face communication [1]. He revealed that words
+contribute only 7% to effective communication, while voice
+tone accounts for 38% and body language for 55%. Therefore,
+facial expressions play a vital role in human communication.
+In this context, it is legitimate to attempt to model the process of human perception of facial expressions. In the last two
+decades, computer vision and artificial intelligence research
+have shown great interest in the automatic recognition of facial
+expressions in videos and static images. Facial Expression
+Recognition (FER) has gained immense importance in various
+fields such as security, healthcare, driver fatigue surveillance,
+and human-machine interaction applications [2]–[4].
+Over the past few years, numerous conventional FER approaches have emerged, employing classical descriptors to
+explicitly extract features from face data. These approaches
+can be categorized into two groups: geometric methods and
+appearance-based methods. While geometric features capture
+the shape, location and interconnections of facial components
+during expressions [5], [6], appearance-based features focus
+on the variations in facial appearance, such as wrinkles and
+furrows, and can be extracted from the whole face or specific
+
+regions [3], [7], [8]. To classify these features, encompassing
+both geometric and texture-based ones, various classifiers have
+been employed, including Support Vector Machines (SVM),
+K-Nearest Neighbor (KNN), as well as neural networks such
+as MultiLayer Perceptron (MLP).
+Conventional FER approaches follow a two-step process:
+they initially analyze and define facial features, and subsequently utilize these features for inference. However, as these
+two steps are performed separately, sub-optimal performance
+is obtained, particularly when dealing with complex datasets
+containing numerous sources of variability. Consequently, It
+is more advantageous to perform these two steps together for
+better recognition performance.
+Over the past two decades, deep neural networks have
+demonstrated exceptional effectiveness in automatic recognition tasks, making them a natural fit for automatic FER. Deep
+learning is used to learn discriminative feature representations
+for automatic FER by designing a hierarchical architecture
+composed of multiple non-linear transformations based on different types of neural networks such as convolutional networks
+(CNNs) and recurrent networks (RNNs). These networks are
+coupled with a classification layer for the classification task.
+As a result, the learning parameters of the classifier are
+determined in conjunction with the learning of the feature
+representations. This automation of feature extraction and classification directly from raw data greatly reduces dependence
+on models based on face geometry and other preprocessing
+techniques.
+In this paper, we introduce EmoNeXt, a novel deep learning
+framework for FER based on an adapted ConvNeXt network
+[9]. We integrate a Spatial Transformer Network (STN) [10] to
+allow the network to learn and apply spatial transformations to
+input images and Squeeze-and-Excitation blocks [11] to enable
+adaptive recalibration of channel-wise feature. Furthermore,
+we combine a Self-Attention regularization term and the
+classical Cross-Entropy [12] Loss to encourage the model
+to generate compact features. The proposed architecture was
+able to produce significantly better results than the original
+ConvNeXt network and outperform other state-of-the-art deep
+learning models under the same experimental setup on the
+FER2013 dataset [13].
+
+II. R ELATED W ORK
+In this section, we will briefly review some recent research
+on facial emotion classification, with a specific focus on
+models that have been evaluated using the FER2013 dataset.
+Given the remarkable achievements and the rise of deep
+learning in the realm of computer vision, particularly in image
+classification tasks, several studies have introduced a range of
+deep learning approaches to address automated FER on the
+FER2013 dataset with the sole objective of achieving the best
+possible classification accuracy.
+In [14], Georgescu et al. presented a method where automatic features, learned by multiple CNN architectures, were
+combined with handcrafted features computed using the bagof-visual-words (BOVW) model. Once the fusion of the two
+types of features is accomplished, a local learning framework
+is utilized to make predictions of the class label for each
+individual test image. In [15], Pecoraro et al. introduced a
+novel channel self-attention module called Local multi-Head
+Channel (LHC), that can be seamlessly incorporated into any
+existing CNN architecture. This module offers a solution to
+the limitation of Global Attention mechanisms by effectively
+directing attention to crucial facial features that significantly
+influence facial expressions. In another paper [16], Fard et al.
+proposed an Adaptive Correlation (Ad-Corre) Loss consisting of three components: Feature Discriminator (FD), Mean
+Discriminator (MD) and Embedding Discriminator (ED). The
+proposed Ad-Corre Loss was combined with the classical
+Cross-Entropy Loss and used to train two backbone models:
+Xception [17] and Resnet50 [18]. The authors demonstrated
+that irrespective of the deep-learning model employed, the
+Ad-Corre Loss allows to increase the discriminative power
+of generated feature vectors, consequently leading to high
+accuracy in classification. Another novel deep learning model
+known as Segmentation VGG-19, was proposed in a recent
+study by Vignesh et al. [19]. This model enhances FER
+by integrating U-Net [20] based segmentation blocks into
+the VGG-19 (Visual Geometry Group) architecture [21]. By
+inserting these segmentation blocks between the layers of
+VGG-19, the model effectively emphasizes significant features
+from the feature map, leading to an enhanced feature extraction
+process. In another recent paper [22], Mukhopadhyay et al.
+presented a deep-learning-based FER method by exploiting
+textural features such as local binary patterns (LBP), local
+ternary patterns (LTP) and completed local binary patterns
+(CLBP). A CNN model is then trained over these textural
+image features to achieve improved accuracy in detecting
+facial emotions. In a recent publication by Shahzad et al. [23],
+a zoning-based FER (ZFER) was introduced. The objective of
+ZFER was to accurately identify additional facial landmarks
+such as eyes, eyebrows, nose, forehead, and mouth, enabling
+a more comprehensive understanding of deep facial emotions
+through zoning. After the initial steps of face detection and
+extraction of face landmarks, these zoning-based landmarks
+were employed to train a hybrid VGG-16 model. The resulting
+feature maps generated by the hybrid model were then utilized
+
+as input for a fully CNN to classify facial emotions.
+Later in the results section, Table II presents a compilation
+of references to other deep learning-based models utilized
+for the FER task. This table provides an overview of the
+classification scores achieved by these state-of-the-art FER
+models on the FER2013 dataset.
+III. M ETHODS
+This section explores various techniques and components
+integrated into a comprehensive deep learning model designed
+specifically for facial emotion detection. The focus primarily
+revolves around three key aspects: the preprocessing of input
+images at the beginning of the network, the feature extraction
+and classification, and the loss function minimizations.
+A. Spatial Transformer Networks
+Spatial Transformer Networks (STN) [10] extend the concept of differentiable attention to encompass various spatial transformations. By integrating a differentiable geometric
+transformation module into the network architecture, STN allow neural networks to learn and apply spatial transformations
+to input data. This capability proves invaluable in FER, where
+the performance is heavily influenced by scale, rotation, and
+translation variations.
+The spatial transformer mechanism comprises three main
+components, illustrated in Figure 1. The first component is the
+localization network, which employs convolutional layers to
+generate a vector representation of the input image. This vector
+is then utilized by the grid generator to create a sampling grid.
+The grid consists of points that determine where the input
+map should be sampled to generate the transformed output.
+Typically, fully connected layers are employed in the grid
+generator. Lastly, the feature map and the sampling grid are
+fed into the sampler, which samples the input image at the
+grid points to produce the final output image.
+
+Fig. 1. The architecture of a spatial transformer module.
+
+The key advantage of STN is their ability to learn the spatial
+transformations automatically as part of the neural network
+training process.
+B. ConvNeXt
+Introduced in 2022, ConvNeXt [9] is a pure convolutional
+model that draws inspiration from Vision Transformers [24].
+It was designed to compete with state-of-the-art Vision Transformers while retaining the simplicity and efficiency of CNNs.
+
+It incorporates various enhancements to the architecture of
+a standard ResNet [18], with many of these modifications
+evident in the ConvNeXt block.
+The ConvNeXt block, illustrated in Figure 2, uses larger
+kernel-sized and depthwise convolutions, increases the network width to 96 channels, and utilizes an inverted bottleneck
+design, to lower the overall network floating-point operations
+(FLOPs) while enhancing performance.
+ConvNeXt also replaces ReLU [25] with GELU [26] as the
+activation function and substituting BatchNorm (BN) [27] with
+Layer Normalization (LN) [28] as the normalization technique,
+allowing the model to acheive a slightly better performance.
+GELU and LN are commonly used in advanced Transformers.
+Fig. 3. The architecture of the Squeeze-and-Excitation block.
+
+D. EmoNeXt Final Architecture
+
+Fig. 2. The ConvNeXt block.
+
+The authors of ConvNeXt have developed multiple versions,
+distinguished by variations in the number of channels (C) and
+blocks (B) within each stage. Here are the configurations:
+C = (96, 192, 384, 768)
+
+B = (3, 3, 9, 3)
+
+Small C = (96, 192, 384, 768)
+
+B = (3, 3, 27, 3)
+
+Tiny
+Base
+
+C = (128, 256, 512, 1024)
+
+B = (3, 3, 27, 3)
+
+Large
+
+C = (192, 384, 768, 1536)
+
+B = (3, 3, 27, 3)
+
+XLarge
+
+C = (256, 512, 1024, 2048)
+
+B = (3, 3, 27, 3)
+
+C. Squeeze-and-Excitation Blocks
+Squeeze-and-Excitation (SE) [11] is a powerful technique
+used in deep learning models to enhance the representational
+power of CNN models. It introduces a mechanism that allows
+the network to adaptively recalibrate the channel-wise features,
+improving the model’s discriminative capabilities. As illustrated in Figure 3, the SE block consists of two fundamental
+operations: squeezing and exciting. In the squeezing phase,
+global average pooling is applied to each channel of the feature
+map (W, H, C), reducing its spatial dimensions to a single
+value per channel (1, 1, C). The exciting phase follows, where
+the squeezed values are transformed using a small set of fully
+connected layers. These layers learn channel-wise weights,
+capturing the interdependencies among feature channels. The
+resulting attention weights are then multiplied element-wise
+with the original feature map, emphasizing informative channels and suppressing less relevant ones.
+
+The EmoNeXt architecture begins with the inclusion of STN
+at the beginning of the network. STN enable the model to
+handle variations in scale, rotation, and translation by learning
+and applying spatial transformations to facial images.
+After passing through the STN, the inputs are then passed
+through ConvNeXt’s patchify module. This module downsamples the input image using a non-overlapping convolution
+with a kernel size of 4. The downsampling helps to reduce
+the dimensionality of the input and capture relevant features
+efficiently.
+The downscaled inputs then go through the ConvNeXt
+stages. Each stage is followed by a SE block to recalibrate
+the feature map before going into the next stage. This recalibration enhances the model’s ability to extract discriminative
+facial features for accurate emotion recognition. The overall
+architecture is illustrated in Figure 4.
+By leveraging these techniques, our EmoNeXt model
+achieves robust and accurate facial emotion detection, effectively handling variations in facial expressions and improving
+overall performance.
+E. Self-Attention Regularization Term
+Self-attention is a powerful mechanism used in various
+domains, including natural language processing, image analysis, and feature extraction [29]. It enables models to assign
+importance to different parts of the input sequence, allowing
+for effective capturing of dependencies and relationships.
+A commonly used approach is the dot product self-attention,
+known for its simplicity and effectiveness. It calculates the
+relevance and importance of the feature vector by computing
+the dot product similarity between pairs of its elements. The
+resulting attention scores are then used to weight the feature
+vector, generating an attended representation that highlights
+the most significant information.
+Mathematically, the dot product self-attention weights can
+be computed as follows:
+
+
+Q · K⊤
+√
+(1)
+W(Q, K) = softmax
+d
+
+features. It is defined as:
+N
+
+L(W ) =
+
+1 X
+(Wi − W̄ )2
+N i=1
+
+(2)
+
+where W represents the self-attention weights, W̄ represents
+the mean attention weights and N is the length of the feature
+vector. By minimizing this term, we encourage the attention
+weights to be closer to the mean value, promoting balanced
+importance across the features.
+The SA regularization term is added to the overall loss
+function of the model, in addition to the Cross-Entropy Loss.
+This helps to incorporate the regularization effect during
+training, encouraging the model to produce more balanced
+attention weights and improve generalization.
+By combining the Cross-Entropy Loss and the SA regularization term, the final loss function becomes:
+Lfinal = LCE + λ · LSA
+
+(3)
+
+where LCE is the Cross-Entropy Loss, LSA is the SA regularization term, and λ is a hyperparameter that controls the
+trade-off between the two terms.
+IV. E XPERIMENTS
+A. Dataset
+The experiments were conducted on the FER2013 dataset,
+initially introduced in ICML 2013 Challenges in Representation Learning [13]. The dataset consists of 35,887 grayscale
+images, each sized 482 pixels (Figure 5). It is divided into
+three subsets: 28,709 images for training, 3,589 images for
+validation, and 3,589 images for testing. The faces in the
+dataset are labeled with one of the seven classes as mentioned
+in Table I. This dataset is widely used for FER tasks due to
+its significant number of samples. However, the distribution
+of classes in this dataset is highly unbalanced, which poses
+a challenge for any deep learning model. Figure 5 includes a
+selection of example data taken from FER2013.
+TABLE I
+FER2013 DATASET SUMMARY
+Fig. 4. Architecture designes for ConvNeXt and EmoNeXt.
+
+Here, Q and K represent queries and keys of dimension
+d. We use a linear layer to compute the queries (Q) and
+keys (K) from a feature vector. The dot product between
+Q and K⊤ computes
+√ pairwise similarities, while scaling the
+dot products by d prevents gradient issues. The softmax
+operation normalizes the attention scores.
+To optimize the model’s performance, an appropriate loss
+function is crucial. For multiclass classification tasks, the
+widely used Cross-Entropy Loss [12] serves as the standard
+choice. However, we introduce a novel component called the
+Self-Attention regularization term (SA).
+The SA regularization term aims to minimize the attention
+weights to encourage balanced importance between generated
+
+Class
+angry
+disgust
+fear
+happy
+sad
+surprise
+neutral
+Total
+
+Training
+3995
+436
+4097
+7215
+4830
+3171
+4965
+28709
+
+Validation
+467
+56
+496
+895
+653
+415
+607
+3589
+
+Testing
+491
+55
+528
+879
+594
+416
+626
+3589
+
+Class total
+4953
+547
+5121
+8989
+6077
+4002
+6198
+35887
+
+B. Training
+Recent studies have highlighted the effectiveness of modern
+training techniques in significantly improving the performance
+of deep learning models. In our model training, we employ
+various advanced strategies to improve the results. We utilize
+the AdamW optimizer [30] with a learning rate of 1e-4, combined with a cosine decay schedule to enhance convergence.
+
+TABLE II
+P ERFORMANCE COMPARISON ON FER2013 TEST SET
+
+Fig. 5. Sample images from the FER2013 dataset.
+
+Additionally, we incorporate data augmentation techniques
+such as RandomCropping and RandomRotation to augment
+the training data, boosting the model’s ability to generalize.
+To prevent overfitting, we implement regularization schemes
+like Stochastic Depth [31] and Label Smoothing [32], which
+contribute to more robust and generalized models.
+To further enhance the performance and address memory constraints, we employ the Exponential Moving Average
+(EMA) technique [33]. EMA has proven effective in alleviating overfitting, particularly in larger models. Moreover, we
+adopt Mixed Precision Training [34], a method that reduces
+memory consumption by almost 2x while accelerating the
+training process.
+In addition, we enhance our model’s capabilities by incorporating weights from pretrained ConvNeXt on the ImageNet22k dataset [35]. This dataset, known for its vast collection
+of diverse images, allows our model to leverage a wealth of
+learned knowledge. To ensure compatibility with the pretrained
+weights, we resize the images in our training pipeline to
+2242 , adhering to the established industry practice. This resizing technique enables us to effectively utilize the pretrained
+weights, resulting in improved performance and enhanced
+proficiency.
+Finally, we trained both the EmoNeXt and ConvNeXt
+models, encompassing all five sizes (T, S, B, L, and XL),
+utilizing an Nvidia T4 GPU with 16GB of VRAM. The
+implementation was done using PyTorch version 2.0.0, and the
+code is available at: https://github.com/yelboudouri/EmoNeXt
+C. Results
+The results presented in Table II demonstrate the superior
+performance of our proposed model, EmoNeXt, compared to
+existing state-of-the-art single network architectures trained on
+the FER2013 dataset. Among the listed models, EmoNeXtXLarge stands out with an accuracy of 76.12%. This achievement can be attributed to the unique design and architecture of
+EmoNeXt, which effectively captures and emphasizes relevant
+facial features for accurate emotion classification.
+When considering accuracy, EmoNeXt-Tiny achieves an
+accuracy of 73.34%, surpassing well-known models like
+ResNet50 (73.20%) and VGG (73.28%), as well as the three
+first versions of ConvNeXt: tiny, small, and base.
+With notable progress, EmoNeXt-Small exhibits enhanced
+performance compared to EmoNeXt-Tiny, attaining an accu-
+
+Model
+GoogleNet [36]
+Deep Emotion [37]
+Inception [38]
+ConvNeXt-Tiny
+Ad-Corre [16]
+ConvNeXt-Small
+SE-Net50 [39]
+ResNet50 [39]
+ConvNeXt-Base
+VGG [38]
+EmoNeXt-Tiny
+ConvNeXt-Large
+Residual Masking Network [40]
+ConvNeXt-XLarge
+LHC-NetC [15]
+EmoNeXt-Small
+LHC-Net [15]
+EmoNeXt-Base
+CNNs + BOVW [14]
+EmoNeXt-Large
+Segmentation VGG-19 [19]
+EmoNeXt-XLarge
+
+Accuracy (%)
+65.20
+70.02
+71.60
+71.99
+72.03
+72.34
+72.50
+73.20
+73.22
+73.28
+73.34
+73.46
+74.14
+74.15
+74.28
+74.33
+74.42
+74.91
+75.42
+75.57
+75.97
+76.12
+
+racy of 74.33%. This achievement surpasses advanced architectures like the Residual Masking Network (74.14%) and
+LHC-NetC (74.28%), as well as the last two sizes of the original ConvNext (Large and XLarge). These results underscore
+EmoNeXt-Small’s exceptional ability to effectively capture
+and classify facial emotions.
+EmoNeXt-Base maintains its performance by achieving
+an accuracy of 74.91%, surpassing models like LHC-NetC
+(74.28%). On the other hand, EmoNeXt-Large achieves an
+accuracy of 75.57%, outperforming the combination of CNN
+and BOVW models (75.42%).
+Notably, EmoNeXt-XLarge achieves an accuracy of
+76.12%, surpassing the current best state-of-the-art accuracy
+attained by the Segmentation VGG-19 model (75.97%). This
+remarkable performance firmly establishes EmoNeXt-XLarge
+as a highly effective model for image classification tasks,
+specifically for facial emotion recognition (FER).
+V. C ONCLUSION
+In this paper, we presented EmoNeXt, a novel deep learning
+framework for facial expression recognition based on an
+adapted ConvNeXt architecture network. The EmoNeXt model
+integrates a Spatial Transformer Network (STN), Squeeze-andExcitation blocks, and self-attention regularization to capture
+rich facial features and improve emotion classification accuracy. Experimental results on the FER2013 dataset demonstrate the superiority of EmoNeXt over existing state-of-the-art
+models. The integration of STN, SE blocks, and self-attention
+provides robust and accurate facial emotion detection, making EmoNeXt a promising approach for various applications
+requiring emotion recognition.
+A detailed study is underway and will be published in a
+forthcoming journal paper. In this upcoming publication, our
+objective is to conduct a thorough evaluation of our model
+
+and compare its performance with other models, using diverse
+FER databases.
+Furthermore, we have future plans to extend the application
+of our model to emotion recognition in elderly Alzheimer’s
+patients, highlighting its potential for real-world impact and
+further research avenues.
+ACKNOWLEDGMENT
+This work was funded by the Dijon Metropole under contract DEVECO DM2023-029-20230301. The authors would
+like to thank Dr. Imad SFEIR from VYV3 Bourgogne for the
+helpful discussions.
+R EFERENCES
+[1] A. Mehrabian, “Some referents and measures of nonverbal behavior,”
+Behavior Research Methods & Instrumentation, vol. 1, no. 6, pp. 203–
+207, 1968.
+[2] G. Cortellessa, R. De Benedictis, F. Fracasso, A. Orlandini, A. Umbrico,
+and A. Cesta, “Ai and robotics to help older adults: Revisiting projects
+in search of lessons learned,” Paladyn, Journal of Behavioral Robotics,
+vol. 12, no. 1, pp. 356–378, 2021.
+[3] M. Sajjad, M. Nasir, F. U. M. Ullah, K. Muhammad, A. K. Sangaiah,
+and S. W. Baik, “Raspberry pi assisted facial expression recognition
+framework for smart security in law-enforcement services,” Information
+Sciences, vol. 479, pp. 416–431, 2019.
+[4] M. Jeong and B. C. Ko, “Driver’s facial expression recognition in realtime for safe driving,” Sensors, vol. 18, no. 12, p. 4270, 2018.
+[5] D. Ghimire, J. Lee, Z.-N. Li, and S. Jeong, “Recognition of facial
+expressions based on salient geometric features and support vector
+machines,” Multimedia Tools and Applications, vol. 76, pp. 7921–7946,
+2017.
+[6] I. Kotsia and I. Pitas, “Facial expression recognition in image sequences
+using geometric deformation features and support vector machines,”
+IEEE transactions on image processing, vol. 16, no. 1, pp. 172–187,
+2006.
+[7] C. Shan, S. Gong, and P. W. McOwan, “Facial expression recognition
+based on local binary patterns: A comprehensive study,” Image and
+vision Computing, vol. 27, no. 6, pp. 803–816, 2009.
+[8] J. Chen, Z. Chen, Z. Chi, H. Fu et al., “Facial expression recognition
+based on facial components detection and hog features,” in International
+workshops on electrical and computer engineering subfields, 2014, pp.
+884–888.
+[9] Z. Liu, H. Mao, C.-Y. Wu, C. Feichtenhofer, T. Darrell, and S. Xie, “A
+convnet for the 2020s,” in Proceedings of the IEEE/CVF Conference on
+Computer Vision and Pattern Recognition, 2022, pp. 11 976–11 986.
+[10] M. Jaderberg, K. Simonyan, A. Zisserman et al., “Spatial transformer
+networks,” Advances in neural information processing systems, vol. 28,
+2015.
+[11] J. Hu, L. Shen, and G. Sun, “Squeeze-and-excitation networks,” in
+Proceedings of the IEEE conference on computer vision and pattern
+recognition, 2018, pp. 7132–7141.
+[12] Z. Zhang and M. Sabuncu, “Generalized cross entropy loss for training
+deep neural networks with noisy labels,” Advances in neural information
+processing systems, vol. 31, 2018.
+[13] I. J. Goodfellow, D. Erhan, P. L. Carrier, A. Courville, M. Mirza,
+B. Hamner, W. Cukierski, Y. Tang, D. Thaler, D.-H. Lee et al., “Challenges in representation learning: A report on three machine learning
+contests,” in Neural Information Processing: 20th International Conference, ICONIP 2013, Daegu, Korea, November 3-7, 2013. Proceedings,
+Part III 20. Springer, 2013, pp. 117–124.
+[14] M.-I. Georgescu, R. T. Ionescu, and M. Popescu, “Local learning with
+deep and handcrafted features for facial expression recognition,” IEEE
+Access, vol. 7, pp. 64 827–64 836, 2019.
+[15] R. Pecoraro, V. Basile, and V. Bono, “Local multi-head channel selfattention for facial expression recognition,” Information, vol. 13, no. 9,
+p. 419, 2022.
+[16] A. P. Fard and M. H. Mahoor, “Ad-corre: Adaptive correlation-based loss
+for facial expression recognition in the wild,” IEEE Access, vol. 10, pp.
+26 756–26 768, 2022.
+
+[17] F. Chollet, “Xception: Deep learning with depthwise separable convolutions,” in Proceedings of the IEEE conference on computer vision and
+pattern recognition, 2017, pp. 1251–1258.
+[18] K. He, X. Zhang, S. Ren, and J. Sun, “Deep residual learning for image
+recognition,” in Proceedings of the IEEE conference on computer vision
+and pattern recognition, 2016, pp. 770–778.
+[19] S. Vignesh, M. Savithadevi, M. Sridevi, and R. Sridhar, “A novel facial
+emotion recognition model using segmentation vgg-19 architecture,”
+International Journal of Information Technology, pp. 1–11, 2023.
+[20] O. Ronneberger, P. Fischer, and T. Brox, “U-net: Convolutional networks
+for biomedical image segmentation,” in Medical Image Computing
+and Computer-Assisted Intervention–MICCAI 2015: 18th International
+Conference, Munich, Germany, October 5-9, 2015, Proceedings, Part III
+18. Springer, 2015, pp. 234–241.
+[21] K. Simonyan and A. Zisserman, “Very deep convolutional networks for
+large-scale image recognition,” arXiv preprint arXiv:1409.1556, 2014.
+[22] M. Mukhopadhyay, A. Dey, and S. Kahali, “A deep-learning-based
+facial expression recognition method using textural features,” Neural
+Computing and Applications, vol. 35, no. 9, pp. 6499–6514, 2023.
+[23] T. Shahzad, K. Iqbal, M. A. Khan, N. Iqbal et al., “Role of zoning
+in facial expression using deep learning,” IEEE Access, vol. 11, pp.
+16 493–16 508, 2023.
+[24] A. Dosovitskiy, L. Beyer, A. Kolesnikov, D. Weissenborn, X. Zhai,
+T. Unterthiner, M. Dehghani, M. Minderer, G. Heigold, S. Gelly et al.,
+“An image is worth 16x16 words: Transformers for image recognition
+at scale,” arXiv preprint arXiv:2010.11929, 2020.
+[25] V. Nair and G. E. Hinton, “Rectified linear units improve restricted boltzmann machines,” in Proceedings of the 27th international conference on
+machine learning (ICML-10), 2010, pp. 807–814.
+[26] D. Hendrycks and K. Gimpel, “Gaussian error linear units (gelus),” arXiv
+preprint arXiv:1606.08415, 2016.
+[27] S. Ioffe, “Batch renormalization: Towards reducing minibatch dependence in batch-normalized models,” Advances in neural information
+processing systems, vol. 30, 2017.
+[28] J. L. Ba, J. R. Kiros, and G. E. Hinton, “Layer normalization,” arXiv
+preprint arXiv:1607.06450, 2016.
+[29] A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez,
+Ł. Kaiser, and I. Polosukhin, “Attention is all you need,” Advances in
+neural information processing systems, vol. 30, 2017.
+[30] I. Loshchilov and F. Hutter, “Decoupled weight decay regularization,”
+arXiv preprint arXiv:1711.05101, 2017.
+[31] G. Huang, Y. Sun, Z. Liu, D. Sedra, and K. Q. Weinberger, “Deep
+networks with stochastic depth,” in Computer Vision–ECCV 2016: 14th
+European Conference, Amsterdam, The Netherlands, October 11–14,
+2016, Proceedings, Part IV 14. Springer, 2016, pp. 646–661.
+[32] C. Szegedy, V. Vanhoucke, S. Ioffe, J. Shlens, and Z. Wojna, “Rethinking
+the inception architecture for computer vision,” in Proceedings of the
+IEEE conference on computer vision and pattern recognition, 2016, pp.
+2818–2826.
+[33] B. T. Polyak and A. B. Juditsky, “Acceleration of stochastic approximation by averaging,” SIAM journal on control and optimization, vol. 30,
+no. 4, pp. 838–855, 1992.
+[34] P. Micikevicius, S. Narang, J. Alben, G. Diamos, E. Elsen, D. Garcia,
+B. Ginsburg, M. Houston, O. Kuchaiev, G. Venkatesh et al., “Mixed
+precision training,” arXiv preprint arXiv:1710.03740, 2017.
+[35] O. Russakovsky, J. Deng, H. Su, J. Krause, S. Satheesh, S. Ma,
+Z. Huang, A. Karpathy, A. Khosla, M. Bernstein et al., “Imagenet large
+scale visual recognition challenge,” International journal of computer
+vision, vol. 115, pp. 211–252, 2015.
+[36] P. Giannopoulos, I. Perikos, and I. Hatzilygeroudis, “Deep learning
+approaches for facial emotion recognition: A case study on fer-2013,”
+Advances in Hybridization of Intelligent Methods: Models, Systems and
+Applications, pp. 1–16, 2018.
+[37] S. Minaee, M. Minaei, and A. Abdolrashidi, “Deep-emotion: Facial expression recognition using attentional convolutional network,” Sensors,
+vol. 21, no. 9, p. 3046, 2021.
+[38] Y. Khaireddin and Z. Chen, “Facial emotion recognition: State of the
+art performance on fer2013,” arXiv preprint arXiv:2105.03588, 2021.
+[39] A. Khanzada, C. Bai, and F. T. Celepcikay, “Facial expression recognition with deep learning,” arXiv preprint arXiv:2004.11823, 2020.
+[40] L. Pham, T. H. Vu, and T. A. Tran, “Facial expression recognition using
+residual masking network,” in 2020 25Th international conference on
+pattern recognition (ICPR). IEEE, 2021, pp. 4513–4519.
+
+
