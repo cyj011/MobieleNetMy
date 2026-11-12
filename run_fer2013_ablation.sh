@@ -41,7 +41,8 @@ run_one() {
   if [[ "$script" != "m_fast.py" ]]; then
     pretrained_args=(--pretrained_path "$PRETRAINED_PATH")
   fi
-  "$PYTHON" "$script" "${COMMON_ARGS[@]}" "${pretrained_args[@]}" \
+  PYTHONPATH="$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}" \
+    "$PYTHON" "$SCRIPT_DIR/$script" "${COMMON_ARGS[@]}" "${pretrained_args[@]}" \
     --output_dir "${OUTPUT_ROOT}/${name}" \
     --writer_output "${OUTPUT_ROOT}/${name}"
 }
